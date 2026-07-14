@@ -1,5 +1,6 @@
 use crate::paths;
 use anyhow::{bail, Context, Result};
+use dialoguer::{theme::ColorfulTheme, MultiSelect};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -319,6 +320,124 @@ impl ProfileManager {
 
         println!("✅ Deleted profile '{}'", name);
         Ok(())
+    }
+
+    /// Edit a profile's selections interactively.
+    pub fn edit(name: &str) -> Result<()> {
+        let manifest_path = paths::profile_manifest(name);
+        if !manifest_path.exists() {
+            bail!("Profile '{}' does not exist at {}", name, manifest_path.display());
+        }
+
+        let content = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("Failed to read profile '{}'", name))?;
+        let mut manifest: ProfileManifest = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse profile '{}'", name))?;
+
+        println!("✏️  Editing selections for profile '{}'", name);
+
+        // 1. Extensions
+        let all_extensions = Self::list_pool_items("extensions");
+        if all_extensions.is_empty() {
+            println!("ℹ️  No extensions found in global pool.");
+        } else {
+            let defaults: Vec<bool> = all_extensions
+                .iter()
+                .map(|item| manifest.select.extensions.contains(item))
+                .collect();
+
+            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+                .with_prompt("Select Extensions (Space to toggle, Enter to confirm)")
+                .items(&all_extensions)
+                .defaults(&defaults)
+                .interact_opt()?;
+
+            if let Some(indices) = selections {
+                manifest.select.extensions = indices
+                    .into_iter()
+                    .map(|idx| all_extensions[idx].clone())
+                    .collect();
+            }
+        }
+
+        // 2. Skills
+        let all_skills = Self::list_pool_items("skills");
+        if all_skills.is_empty() {
+            println!("ℹ️  No skills found in global pool.");
+        } else {
+            let defaults: Vec<bool> = all_skills
+                .iter()
+                .map(|item| manifest.select.skills.contains(item))
+                .collect();
+
+            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+                .with_prompt("Select Skills (Space to toggle, Enter to confirm)")
+                .items(&all_skills)
+                .defaults(&defaults)
+                .interact_opt()?;
+
+            if let Some(indices) = selections {
+                manifest.select.skills = indices
+                    .into_iter()
+                    .map(|idx| all_skills[idx].clone())
+                    .collect();
+            }
+        }
+
+        // 3. Prompts
+        let all_prompts = Self::list_pool_items("prompts");
+        if all_prompts.is_empty() {
+            println!("ℹ️  No prompts found in global pool.");
+        } else {
+            let defaults: Vec<bool> = all_prompts
+                .iter()
+                .map(|item| manifest.select.prompts.contains(item))
+                .collect();
+
+            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+                .with_prompt("Select Prompts (Space to toggle, Enter to confirm)")
+                .items(&all_prompts)
+                .defaults(&defaults)
+                .interact_opt()?;
+
+            if let Some(indices) = selections {
+                manifest.select.prompts = indices
+                    .into_iter()
+                    .map(|idx| all_prompts[idx].clone())
+                    .collect();
+            }
+        }
+
+        // Write manifest back
+        let json = serde_json::to_string_pretty(&manifest)
+            .context("Failed to serialize manifest")?;
+        fs::write(&manifest_path, &json)
+            .with_context(|| format!("Failed to write {}", manifest_path.display()))?;
+
+        println!("✅ Profile '{}' updated successfully.", name);
+
+        // Auto-rebuild active view if active
+        let active = Self::get_active();
+        if active.as_deref() == Some(name) {
+            println!("⚙️  Rebuilding active view to apply changes...");
+            Self::use_profile(name)?;
+        }
+
+        Ok(())
+    }
+
+    fn list_pool_items(subdir: &str) -> Vec<String> {
+        let path = paths::pool_dir().join(subdir);
+        let mut items = Vec::new();
+        if let Ok(entries) = fs::read_dir(&path) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    items.push(name.to_string());
+                }
+            }
+        }
+        items.sort();
+        items
     }
 
     /// Migrate all old-style profiles to the new format.

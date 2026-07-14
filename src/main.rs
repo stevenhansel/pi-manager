@@ -33,6 +33,7 @@ fn run() -> anyhow::Result<()> {
             ProfileManager::use_profile(&name)
         }
         Some(Commands::Delete { name, force }) => ProfileManager::delete(&name, force),
+        Some(Commands::Edit { name }) => ProfileManager::edit(&name),
         None => {
             // No subcommand → activate default profile
             ProfileManager::use_default()

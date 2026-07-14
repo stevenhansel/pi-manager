@@ -61,6 +61,12 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Edit a profile's selections (extensions, skills, prompts) interactively
+    Edit {
+        /// Profile name
+        name: String,
+    },
+
     /// Migrate old-style profiles (directories) to the new JSON manifest format
     Migrate,
 }
