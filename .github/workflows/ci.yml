@@ -1,0 +1,115 @@
+# =============================================================================
+# Pi-Manager CI/CD Pipeline
+#
+# Stages:
+#   1. Linting     — cargo clippy (runs on push/pull_request)
+#   2. Testing     — cargo test (runs on push/pull_request)
+#   3. Security    — cargo audit + Trivy FS scan (every 3 days via cron)
+# =============================================================================
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 0 */3 * *" # every 3 days at midnight UTC
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Linting ─────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Lint (clippy)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # ── Testing ──────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        run: cargo test
+
+  # ── Security & Vulnerability Scanning (every 3 days) ────────────────────
+  security-audit:
+    name: Security Scan (Cargo Audit)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Scan Rust dependencies (cargo audit)
+        continue-on-error: true
+        run: cargo audit
+
+      - name: Export JSON report
+        continue-on-error: true
+        run: cargo audit --json > rust-audit-report.json || true
+
+      - name: Upload Rust audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-audit-report
+          path: rust-audit-report.json
+
+  security-trivy:
+    name: Security Scan (Trivy FS Scan)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan codebase with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        continue-on-error: true
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: 0
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: codebase-trivy
