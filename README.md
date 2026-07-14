@@ -22,12 +22,41 @@ your existing config into the new resource pool format and replace it with a sym
 
 ## Installation
 
+Requires [pi](https://pi.dev) (`npm install -g pi-coding-agent`). Choose one of the installation methods below:
+
+### 1. APT Repository (Debian / Ubuntu / Raspberry Pi OS)
+Download and trust the repository public key:
 ```bash
-cargo install --path /path/to/pim
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://stevenhansel.github.io/pi-manager/public.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/pi-manager.gpg
+```
+Add the repository source:
+```bash
+echo "deb [signed-by=/etc/apt/keyrings/pi-manager.gpg] https://stevenhansel.github.io/pi-manager stable main" | sudo tee /etc/apt/sources.list.d/pi-manager.list
+```
+Update and install:
+```bash
+sudo apt-get update && sudo apt-get install pim
 ```
 
-Requires [Rust](https://rustup.rs/) and [pi](https://pi.dev)
-(`npm install -g pi-coding-agent`).
+### 2. Nix Flake
+To run `pim` instantly without installing:
+```bash
+nix run github:stevenhansel/pi-manager -- --help
+```
+To install it in your user profile:
+```bash
+nix profile install github:stevenhansel/pi-manager
+```
+
+### 3. Pre-compiled Binaries (GitHub Releases)
+You can download pre-compiled release binaries for Linux, macOS, and Windows directly from the [Releases Page](https://github.com/stevenhansel/pi-manager/releases). Extract the archive and copy the `pim` binary to any directory on your `$PATH`.
+
+### 4. Build from Source (Cargo)
+If you have [Rust](https://rustup.rs/) installed, you can build and install the binary directly from source:
+```bash
+cargo install --git https://github.com/stevenhansel/pi-manager.git
+```
 
 ## Usage
 

@@ -62,3 +62,83 @@ jobs:
           files: ${{ matrix.asset_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-apt:
+    name: Build and Host APT Repository
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: apt-repo
+        continue-on-error: true
+
+      - name: Install Debian packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Debian package
+        run: |
+          cargo install cargo-deb
+          cargo deb --target x86_64-unknown-linux-gnu --locked
+
+      - name: Import GPG Key
+        id: import-gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Update APT index and Sign Releases
+        run: |
+          # Ensure folders exist
+          mkdir -p apt-repo/pool/main
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+
+          # Export public GPG key for users
+          gpg --armor --export ${{ steps.import-gpg.outputs.keyid }} > apt-repo/public.gpg
+
+          # Copy package to pool
+          cp target/x86_64-unknown-linux-gnu/debian/*.deb apt-repo/pool/main/
+
+          # Generate Packages list
+          cd apt-repo
+          dpkg-scanpackages --multiversion pool/main > dists/stable/main/binary-amd64/Packages
+          gzip -9c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+
+          # Generate Release metadata
+          cd dists/stable
+          cat <<EOF > Release
+          Origin: pi-manager Repository
+          Label: pi-manager
+          Codename: stable
+          Architectures: amd64
+          Components: main
+          Description: APT Repository for pi-manager
+          EOF
+
+          echo "SHA256:" >> Release
+          for f in main/binary-amd64/Packages*; do
+            echo " $(sha256sum $f | cut -d' ' -f1) $(wc -c $f | awk '{print $1}') $f" >> Release
+          done
+
+          # Sign release using the imported key
+          rm -f InRelease Release.gpg
+          gpg --default-key "${{ steps.import-gpg.outputs.keyid }}" --clearsign --output InRelease Release
+          gpg --default-key "${{ steps.import-gpg.outputs.keyid }}" -abs --output Release.gpg Release
+
+      - name: Deploy static site to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apt-repo
+          publish_branch: gh-pages
+

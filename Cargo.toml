@@ -21,3 +21,10 @@ dialoguer = "0.11"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+[package.metadata.deb]
+maintainer = "Steven Hansel <steven.hansel@tu-dortmund.de>"
+assets = [
+    ["target/release/pim", "usr/bin/pim", "755"],
+    ["README.md", "usr/share/doc/pim/README.md", "644"]
+]
