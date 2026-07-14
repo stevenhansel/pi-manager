@@ -1,0 +1,174 @@
+Package: pi-manager
+Version: 0.0.1-1
+Architecture: amd64
+Maintainer: Steven Hansel <steven.hansel@tu-dortmund.de>
+Installed-Size: 1180
+Depends: libc6 (>= 2.34)
+Filename: pool/main/pi-manager_0.0.1-1_amd64.deb
+Size: 426292
+MD5sum: 8190b18018d8cde3b0c7f25384faf738
+SHA1: 2fee46ecef6d439a4118c09d5d4ae77accfadf96
+SHA256: 226deba7b8d9cd3f0b0bbe7dc763ce798f21fd6cff2e4e74ede0fef67b787612
+Priority: optional
+Description: Profile manager for pi (AI coding agent). Switch between independent config
+ profiles.
+ # pim
+ .
+ Profile manager for [pi](https://pi.dev). Switch between
+ independent sets of settings, extensions, skills, themes, and auth with a
+ single
+ command.
+ .
+ ## How it works
+ .
+ Pi reads its configuration from `~/.pi/agent/`. `pim` stores lightweight
+ profile
+ manifests under `~/.pi-manager/profiles/<name>.json`. When you activate a
+ profile,
+ `pim` dynamically constructs the profile's configuration (merging settings and
+ pool resources)
+ under `~/.pi-manager/.active/<name>/` and sets `~/.pi/agent` as a **symlink**
+ pointing to it.
+ .
+ You never wrap pi — just activate a profile with `pim`, then run `pi`
+ as usual. Pi reads `~/.pi/agent` naturally and gets the profile's config.
+ .
+ ### First-time migration
+ .
+ If you already have a real `~/.pi/agent/` directory from using pi normally,
+ the first time you run `pim use <name>`, it will automatically migrate
+ your existing config into the new resource pool format and replace it with a
+ symlink.
+ .
+ ## Installation
+ .
+ Requires [pi](https://pi.dev) (`npm install -g pi-coding-agent`). Choose one of
+ the installation methods below:
+ .
+ ### 1. APT Repository (Debian / Ubuntu / Raspberry Pi OS)
+ Download and trust the repository public key:
+ ```bash
+ sudo mkdir -p /etc/apt/keyrings
+ curl -fsSL https://stevenhansel.github.io/pi-manager/public.gpg | sudo gpg
+ --dearmor -o /etc/apt/keyrings/pi-manager.gpg
+ ```
+ Add the repository source:
+ ```bash
+ echo "deb [signed-by=/etc/apt/keyrings/pi-manager.gpg]
+ https://stevenhansel.github.io/pi-manager stable main" | sudo tee
+ /etc/apt/sources.list.d/pi-manager.list
+ ```
+ Update and install:
+ ```bash
+ sudo apt-get update && sudo apt-get install pim
+ ```
+ .
+ ### 2. Nix Flake
+ To run `pim` instantly without installing:
+ ```bash
+ nix run github:stevenhansel/pi-manager -- --help
+ ```
+ To install it in your user profile:
+ ```bash
+ nix profile install github:stevenhansel/pi-manager
+ ```
+ .
+ ### 3. Pre-compiled Binaries (GitHub Releases)
+ You can download pre-compiled release binaries for Linux, macOS, and Windows
+ directly from the [Releases
+ Page](https://github.com/stevenhansel/pi-manager/releases). Extract the archive
+ and copy the `pim` binary to any directory on your `$PATH`.
+ .
+ ### 4. Build from Source (Cargo)
+ If you have [Rust](https://rustup.rs/) installed, you can build and install the
+ binary directly from source:
+ ```bash
+ cargo install --git https://github.com/stevenhansel/pi-manager.git
+ ```
+ .
+ ## Usage
+ .
+ ```bash
+ # Create a profile (empty, start fresh)
+ pim create work
+ .
+ # Create from your current ~/.pi/agent config
+ pim create work --from-base
+ .
+ # Copy from an existing profile
+ pim create experiments --from work
+ .
+ # Edit selections (extensions, skills, prompts) interactively
+ pim edit work
+ .
+ # List profiles (shows active ◀ and default markers)
+ pim list
+ .
+ # Set a default profile
+ pim set-default work
+ .
+ # Activate a profile (makes ~/.pi/agent point to its active view)
+ pim use work
+ .
+ # Then just run pi directly:
+ pi
+ pi -p "fix the bug"
+ .
+ # Activate the default profile
+ pim
+ .
+ # Show current status
+ pim status
+ .
+ # Delete a profile
+ pim delete experiments
+ pim delete experiments --force   # skip confirmation
+ ```
+ .
+ ## What a profile looks like
+ .
+ A profile is a lightweight JSON manifest under
+ `~/.pi-manager/profiles/<name>.json`:
+ .
+ ```json
+ {
+   "select": {
+     "extensions": ["rtk.ts"],
+     "skills": ["web-research"]
+   },
+   "settings": {
+     "theme": "dark"
+   }
+ }
+ ```
+ .
+ When activated, `pim` builds the effective active view at
+ `~/.pi-manager/.active/<name>/`:
+ .
+ ```
+ ~/.pi-manager/.active/work/
+ ├── settings.json
+ ├── mcp.json
+ ├── extensions/      ── symlinks → pool/extensions/
+ ├── skills/          ── symlinks → pool/skills/
+ ├── prompts/         ── symlinks → pool/prompts/
+ ├── auth.json        ── symlink  → data/work/auth.json
+ └── sessions/        ── symlink  → data/work/sessions/
+ ```
+ .
+ Since each profile links to its own data directory
+ (`~/.pi-manager/data/<name>/`), you can log into
+ different accounts per profile (e.g., work GitHub vs personal GitHub).
+ .
+ ## Architecture
+ .
+ pim uses a **resource pool configuration model** — see
+ [`docs/configuration.md`](docs/configuration.md) for the full design.
+ .
+ In short:
+ .
+ - **`pool/`** — global source of truth for extensions, skills, and prompts
+ - **`profiles/<name>.json`** — lightweight JSON manifests that select from
+ the pool and declare configuration
+ - **`data/<name>/`** — auto-generated runtime state (auth tokens, sessions)
+

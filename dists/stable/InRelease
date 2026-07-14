@@ -1,0 +1,19 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: pi-manager Repository
+Label: pi-manager
+Codename: stable
+Architectures: amd64
+Components: main
+Description: APT Repository for pi-manager
+SHA256:
+ 39b21113812ba1ec3bb052ab79533c1e09259bd1d5a8eabdb1df09aa78dfcd51 5093 main/binary-amd64/Packages
+ ea7c245cda1b9b0668dd989e90a3d238884c74f19687ff038ab44b509daacce5 2216 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQSFso1s9HgDAJdIfsYffwdWeSqnIgUCala7hAAKCRAffwdWeSqn
+IoktAP47e1pJ5GG8fb90S7qTdRvi+dQW8oMviFMJoQYL9tR/pAEA2hurrms9/7WG
+0EraEpvMJs4heckvhXrFqWgOD5qcyQ4=
+=d29S
+-----END PGP SIGNATURE-----
