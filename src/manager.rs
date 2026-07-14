@@ -217,7 +217,7 @@ impl ProfileManager {
         Ok(())
     }
 
-    /// Activate a profile by building its merged view and pointing `~/.pi/agent` at it.
+    /// Activate a profile by building its active view and pointing `~/.pi/agent` at it.
     pub fn use_profile(name: &str) -> Result<()> {
         fs::create_dir_all(paths::pool_extensions_dir())?;
         fs::create_dir_all(paths::pool_skills_dir())?;
