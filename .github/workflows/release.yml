@@ -132,8 +132,8 @@ jobs:
 
           # Sign release using the imported key
           rm -f InRelease Release.gpg
-          gpg --default-key "${{ steps.import-gpg.outputs.keyid }}" --clearsign --output InRelease Release
-          gpg --default-key "${{ steps.import-gpg.outputs.keyid }}" -abs --output Release.gpg Release
+          gpg --batch --no-tty --yes --default-key "${{ steps.import-gpg.outputs.keyid }}" --clearsign --output InRelease Release
+          gpg --batch --no-tty --yes --default-key "${{ steps.import-gpg.outputs.keyid }}" -abs --output Release.gpg Release
 
       - name: Deploy static site to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
