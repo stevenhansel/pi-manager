@@ -1,15 +1,14 @@
 use clap::{Parser, Subcommand};
 
-/// Profile manager for pi
+/// Profile manager for pi (AI coding agent).
 ///
-/// Manage independent config profiles stored in ~/.pi-manager/profiles/.
-/// Each profile is a complete pi agent directory that gets symlinked
-/// into ~/.pi/agent when activated. After activating a profile, just
-/// run `pi` directly — no wrapper needed.
+/// Manage independent profiles stored as lightweight JSON manifests in
+/// ~/.pi-manager/profiles/. Each profile selects resources (extensions,
+/// skills, prompts) from a global pool and declares per-profile settings.
 ///
-/// Profiles can inherit from a parent profile via a pim.json manifest.
-/// The parent provides common files (e.g., rtk.ts, web-research) and
-/// the child overlays profile-specific additions on top.
+/// Activate a profile with `pim use <name>` — this builds the effective
+/// ~/.pi/agent directory from the pool + manifest. Then just run `pi`
+/// as usual.
 #[derive(Parser)]
 #[command(name = "pim", version, about, long_about = None)]
 pub struct Cli {
@@ -24,18 +23,13 @@ pub enum Commands {
         /// Profile name
         name: String,
 
-        /// Copy settings from the current ~/.pi/agent config
-        #[arg(long)]
-        from_base: bool,
-
-        /// Copy settings from an existing profile
+        /// Copy selections from an existing profile
         #[arg(long)]
         from: Option<String>,
 
-        /// Inherit from a parent profile (e.g. --inherits default).
-        /// Common files from the parent are merged in at activation time.
+        /// Copy selections from the currently active profile
         #[arg(long)]
-        inherits: Option<String>,
+        from_base: bool,
     },
 
     /// List all profiles (shows active and default markers)
@@ -50,14 +44,14 @@ pub enum Commands {
         name: String,
     },
 
-    /// Activate a profile by pointing ~/.pi/agent at it.
-    /// After this, just run `pi` as usual.
+    /// Activate a profile by building its active view and pointing
+    /// ~/.pi/agent at it. After this, just run `pi` as usual.
     Use {
         /// Profile name
         name: String,
     },
 
-    /// Delete a profile
+    /// Delete a profile and its data
     Delete {
         /// Profile name
         name: String,
@@ -66,4 +60,7 @@ pub enum Commands {
         #[arg(long, short = 'f')]
         force: bool,
     },
+
+    /// Migrate old-style profiles (directories) to the new JSON manifest format
+    Migrate,
 }

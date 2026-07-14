@@ -121,7 +121,7 @@ impl ProfileManager {
                 let path = entry.path();
                 if path.is_dir() && !path.is_symlink() {
                     if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                        if name != ".merged" {
+                        if name != ".active" {
                             old_dirs.push(name.to_string());
                         }
                     }
@@ -238,17 +238,17 @@ impl ProfileManager {
         let manifest: ProfileManifest = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse profile '{}'", name))?;
 
-        let merged = paths::merged_dir(name);
-        if merged.exists() {
-            fs::remove_dir_all(&merged).context("Failed to remove previous merged view")?;
+        let active_dir = paths::active_dir(name);
+        if active_dir.exists() {
+            fs::remove_dir_all(&active_dir).context("Failed to remove previous active view")?;
         }
 
-        Self::build_from_manifest(&manifest, &merged)?;
+        Self::build_from_manifest(&manifest, &active_dir)?;
 
         fs::create_dir_all(paths::data_dir(name))?;
-        Self::link_data_dir(name, &merged)?;
+        Self::link_data_dir(name, &active_dir)?;
 
-        Self::set_agent_symlink(&merged)?;
+        Self::set_agent_symlink(&active_dir)?;
 
         let ext_count = manifest.select.extensions.len();
         let skill_count = manifest.select.skills.len();
@@ -298,9 +298,9 @@ impl ProfileManager {
             fs::remove_dir_all(&data).context("Failed to remove profile data")?;
         }
 
-        let merged = paths::merged_dir(name);
-        if merged.exists() {
-            fs::remove_dir_all(&merged).ok();
+        let active_dir = paths::active_dir(name);
+        if active_dir.exists() {
+            fs::remove_dir_all(&active_dir).ok();
         }
 
         if is_active {
@@ -338,7 +338,7 @@ impl ProfileManager {
                 let path = entry.path();
                 if path.is_dir() && !path.is_symlink() {
                     if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                        if name == ".merged" { continue; }
+                        if name == ".active" { continue; }
                         if paths::profile_manifest(name).exists() {
                             skipped += 1;
                             continue;
@@ -550,8 +550,8 @@ impl ProfileManager {
         Ok(())
     }
 
-    /// Link runtime state from the data directory into the merged view.
-    fn link_data_dir(name: &str, merged: &Path) -> Result<()> {
+    /// Link runtime state from the data directory into the active view.
+    fn link_data_dir(name: &str, active_dir: &Path) -> Result<()> {
         let data = paths::data_dir(name);
         if !data.exists() {
             return Ok(());
@@ -560,13 +560,13 @@ impl ProfileManager {
         for item in &["auth.json", "models.json", "trust.json", "APPEND_SYSTEM.md"] {
             let src = data.join(item);
             if src.exists() {
-                Self::symlink_item(&src, &merged.join(item))?;
+                Self::symlink_item(&src, &active_dir.join(item))?;
             }
         }
 
         let src_sessions = data.join("sessions");
         if src_sessions.exists() {
-            let dst_sessions = merged.join("sessions");
+            let dst_sessions = active_dir.join("sessions");
             fs::create_dir_all(&dst_sessions)?;
             if let Ok(entries) = fs::read_dir(&src_sessions) {
                 for entry in entries.flatten() {
@@ -648,11 +648,11 @@ impl ProfileManager {
             return None;
         }
         let target = fs::read_link(&agent).ok()?;
-        let merged_root = paths::merged_root();
+        let active_root = paths::active_root();
         let profiles_root = paths::profiles_root();
 
-        if target.starts_with(&merged_root) {
-            target.components().last()
+        if target.starts_with(&active_root) {
+            target.components().next_back()
                 .and_then(|c| c.as_os_str().to_str().map(|s| s.to_string()))
         } else if target.starts_with(&profiles_root) {
             target.file_name()?.to_str().map(|s| s.to_string())
@@ -661,7 +661,7 @@ impl ProfileManager {
         }
     }
 
-    /// Auto-heals the agent symlink if it points to the old-style profiles path.
+    /// Auto-heals the agent symlink if it points to the old-style profiles path or the old .merged path.
     pub fn auto_heal_symlink() -> Result<()> {
         let agent = paths::agent_dir();
         if !agent.is_symlink() {
@@ -672,7 +672,9 @@ impl ProfileManager {
             Err(_) => return Ok(()),
         };
         let profiles_root = paths::profiles_root();
-        if target.starts_with(&profiles_root) {
+        let old_merged_root = paths::pi_manager_root().join(".merged");
+
+        if target.starts_with(&profiles_root) || target.starts_with(&old_merged_root) {
             if let Some(name) = target.file_name().and_then(|s| s.to_str()) {
                 let manifest_exists = paths::profile_manifest(name).exists();
                 let dir_exists = paths::profile_dir(name).is_dir();
@@ -853,7 +855,7 @@ mod tests {
     fn test_build_empty_manifest_creates_dirs() {
         let (_tmp, home) = sandbox();
         let manifest = ProfileManifest::default();
-        let dst = home.join("merged");
+        let dst = home.join("active");
         ProfileManager::build_from_manifest(&manifest, &dst).unwrap();
         assert!(dst.join("extensions").is_dir());
         assert!(dst.join("skills").is_dir());
@@ -867,7 +869,7 @@ mod tests {
         }"#;
         let manifest: ProfileManifest = serde_json::from_str(json).unwrap();
         let (_tmp, home) = sandbox();
-        let dst = home.join("merged");
+        let dst = home.join("active");
         ProfileManager::build_from_manifest(&manifest, &dst).unwrap();
         assert!(dst.join("settings.json").exists());
         let content = read_file(&dst.join("settings.json"));
@@ -884,7 +886,7 @@ mod tests {
         }"#;
         let manifest: ProfileManifest = serde_json::from_str(json).unwrap();
         let (_tmp, home) = sandbox();
-        let dst = home.join("merged");
+        let dst = home.join("active");
         ProfileManager::build_from_manifest(&manifest, &dst).unwrap();
         assert!(dst.join("mcp.json").exists());
     }
@@ -1018,7 +1020,7 @@ mod tests {
 
             assert!(agent.is_symlink());
             let target = fs::read_link(&agent).unwrap();
-            assert_eq!(target, paths::merged_dir(name));
+            assert_eq!(target, paths::active_dir(name));
         });
     }
 
@@ -1044,13 +1046,13 @@ mod tests {
 
             assert!(agent.is_symlink());
             let target = fs::read_link(&agent).unwrap();
-            assert_eq!(target, paths::merged_dir(name));
-            assert!(paths::merged_dir(name).exists());
+            assert_eq!(target, paths::active_dir(name));
+            assert!(paths::active_dir(name).exists());
         });
     }
 
     #[test]
-    fn test_auto_heal_no_op_for_valid_merged_link() {
+    fn test_auto_heal_no_op_for_valid_active_link() {
         let (_tmp, home) = sandbox();
         let name = "test-valid";
         with_home(&home, || {

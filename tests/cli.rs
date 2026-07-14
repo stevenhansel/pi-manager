@@ -43,15 +43,15 @@ impl Sandbox {
         self.home.join(".pi").join("agent")
     }
 
-    /// Assert ~/.pi/agent is a symlink pointing to the merged view of `name`.
+    /// Assert ~/.pi/agent is a symlink pointing to the active view of `name`.
     fn assert_active_profile(&self, name: &str) {
         let agent = self.agent_dir();
         assert!(agent.is_symlink(), "~/.pi/agent should be a symlink");
         let target = fs::read_link(&agent).unwrap();
-        let expected = self.home.join(".pi-manager").join(".merged").join(name);
+        let expected = self.home.join(".pi-manager").join(".active").join(name);
         assert_eq!(
             target, expected,
-            "~/.pi/agent should point to merged view of '{}'\n  got:      {}\n  expected: {}",
+            "~/.pi/agent should point to active view of '{}'\n  got:      {}\n  expected: {}",
             name, target.display(), expected.display()
         );
     }
@@ -160,10 +160,10 @@ fn test_use_with_selections() {
     s.pim().arg("use").arg("work").assert().success();
     s.assert_active_profile("work");
 
-    // Check the extension was symlinked into the merged view
-    let merged_ext = s.home().join(".pi-manager").join(".merged").join("work").join("extensions").join("rtk.ts");
-    assert!(merged_ext.exists(), "extension should exist in merged view");
-    assert!(merged_ext.is_symlink(), "extension should be a symlink");
+    // Check the extension was symlinked into the active view
+    let active_ext = s.home().join(".pi-manager").join(".active").join("work").join("extensions").join("rtk.ts");
+    assert!(active_ext.exists(), "extension should exist in active view");
+    assert!(active_ext.is_symlink(), "extension should be a symlink");
 }
 
 // ─── status ────────────────────────────────────────────────────
@@ -301,7 +301,7 @@ fn test_use_migrates_real_directory() {
     // Use it — should migrate on-the-fly
     s.pim().arg("use").arg("legacy").assert().success();
 
-    // Should now be a merged view symlink
+    // Should now be an active view symlink
     s.assert_active_profile("legacy");
 
     // Old directory should be gone
@@ -352,6 +352,6 @@ fn test_migrate_active_profile_updates_symlink() {
     // Run migrate
     s.pim().arg("migrate").assert().success();
 
-    // Verify it is now migrated AND the symlink is updated to the merged view
+    // Verify it is now migrated AND the symlink is updated to the active view
     s.assert_active_profile("legacy");
 }

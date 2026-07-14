@@ -7,29 +7,55 @@ pub fn pi_manager_root() -> PathBuf {
         .join(".pi-manager")
 }
 
-/// Directory where all profile agent directories are stored.
+/// Directory where profile manifests (JSON) are stored.
 pub fn profiles_root() -> PathBuf {
     pi_manager_root().join("profiles")
 }
 
-/// Path to a specific profile's agent directory.
+/// Path to a profile manifest JSON file.
+pub fn profile_manifest(name: &str) -> PathBuf {
+    profiles_root().join(format!("{}.json", name))
+}
+
+/// Old-style profile directory (pre-migration).
 pub fn profile_dir(name: &str) -> PathBuf {
     profiles_root().join(name)
 }
 
-/// Root directory for merged profile views (inheritance).
-pub fn merged_root() -> PathBuf {
-    pi_manager_root().join(".merged")
+/// Global pool directory for reusable resources.
+pub fn pool_dir() -> PathBuf {
+    pi_manager_root().join("pool")
 }
 
-/// Path to a merged view of a profile.
-pub fn merged_dir(name: &str) -> PathBuf {
-    merged_root().join(name)
+pub fn pool_extensions_dir() -> PathBuf {
+    pool_dir().join("extensions")
+}
+
+pub fn pool_skills_dir() -> PathBuf {
+    pool_dir().join("skills")
+}
+
+pub fn pool_prompts_dir() -> PathBuf {
+    pool_dir().join("prompts")
+}
+
+/// Directory for profile-specific runtime state (auth, sessions, etc.)
+pub fn data_dir(name: &str) -> PathBuf {
+    pi_manager_root().join("data").join(name)
+}
+
+/// Root directory for active profile views.
+pub fn active_root() -> PathBuf {
+    pi_manager_root().join(".active")
+}
+
+/// Path to an active view of a profile (the effective agent dir).
+pub fn active_dir(name: &str) -> PathBuf {
+    active_root().join(name)
 }
 
 /// The actual pi agent directory (`~/.pi/agent`).
-/// When managed by pi-manager, this is a symlink pointing to a profile dir
-/// or a merged view.
+/// When managed by pi-manager, this is a symlink pointing to an active view.
 pub fn agent_dir() -> PathBuf {
     dirs::home_dir()
         .expect("Could not find home directory")
