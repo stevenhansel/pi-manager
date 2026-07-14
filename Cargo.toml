@@ -1,6 +1,6 @@
 [package]
 name = "pi-manager"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 description = "Profile manager for pi (AI coding agent). Switch between independent config profiles."
 authors = ["steven"]
