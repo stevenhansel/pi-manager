@@ -16,10 +16,16 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    // Auto-heal the active profile symlink if it was pointing to an old-style format.
+    if let Err(e) = ProfileManager::auto_heal_symlink() {
+        eprintln!("⚠️  Warning: Failed to auto-heal active profile symlink: {}", e);
+    }
+
     match cli.command {
-        Some(Commands::Create { name, from_base, from, inherits }) => {
-            ProfileManager::create(&name, from_base, from.as_deref(), inherits.as_deref())
+        Some(Commands::Create { name, from, from_base }) => {
+            ProfileManager::create(&name, from_base, from.as_deref())
         }
+        Some(Commands::Migrate) => ProfileManager::migrate(),
         Some(Commands::List) => ProfileManager::list(),
         Some(Commands::Status) => ProfileManager::status(),
         Some(Commands::SetDefault { name }) => ProfileManager::set_default(&name),
