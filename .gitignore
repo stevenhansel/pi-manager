@@ -1,0 +1,21 @@
+# Rust build artifacts
+target/
+
+# Rust Cargo lock file for libraries (uncomment if this becomes a library crate)
+# Cargo.lock is committed for binaries by convention — keep it tracked
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Project-specific
+*.log
