@@ -185,6 +185,21 @@ impl ProfileManager {
     /// Pool items are symlinked in, config defaults are auto-seeded from pool
     /// templates, and runtime state (sessions, auth) already lives here.
     pub fn set_default(name: &str) -> Result<()> {
+        Self::build(name)?;
+
+        // Set this as default so `pim` (no args) launches it
+        let mut config = Self::read_config();
+        config.default_profile = Some(name.to_string());
+        Self::write_config(&config)?;
+
+        Ok(())
+    }
+
+    /// Build/refresh a profile's agent directory from its manifest.
+    /// Creates pool dirs, symlinks items, seeds configs — but does **not**
+    /// change the default profile. Use `set_default` when you also want to
+    /// persist the profile as the default.
+    fn build(name: &str) -> Result<()> {
         fs::create_dir_all(paths::pool_extensions_dir())?;
         fs::create_dir_all(paths::pool_skills_dir())?;
         fs::create_dir_all(paths::pool_prompts_dir())?;
@@ -207,12 +222,6 @@ impl ProfileManager {
 
         // Build the symlink forest and generate files
         Self::build_profile(&manifest, &profile_dir)?;
-
-        // Set this as default so `pim` (no args) launches it
-        let mut config = Self::read_config();
-        config.default_profile = Some(name.to_string());
-        Self::write_config(&config)?;
-
 
         Ok(())
     }
@@ -671,10 +680,10 @@ impl ProfileManager {
     /// simultaneously from different terminals, each with their own profile.
     pub fn launch_pi(profile: &str, pi_args: &[String]) -> Result<()> {
         let profile_dir = paths::profile_dir(profile);
-        // Always rebuild symlinks/extensions/skills from manifest before launching,
-        // so that edits are reflected even when the profile is not the active default.
+        // Build/rebuild symlinks and configs from manifest before launching,
+        // so that edits are reflected. Does **not** change the default profile.
         if profile_dir.join("manifest.json").exists() {
-            Self::set_default(profile)?;
+            Self::build(profile)?;
         } else {
             bail!("Profile '{profile}' does not exist — create it with 'pim create {profile}'");
         }
