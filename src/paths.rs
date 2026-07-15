@@ -14,7 +14,7 @@ pub fn profiles_root() -> PathBuf {
 
 /// Path to a profile manifest JSON file.
 pub fn profile_manifest(name: &str) -> PathBuf {
-    profiles_root().join(format!("{}.json", name))
+    profiles_root().join(format!("{name}.json"))
 }
 
 /// Old-style profile directory (pre-migration).

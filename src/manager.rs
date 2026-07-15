@@ -1,6 +1,6 @@
 use crate::paths;
-use anyhow::{bail, Context, Result};
-use dialoguer::{theme::ColorfulTheme, MultiSelect};
+use anyhow::{Context, Result, bail};
+use dialoguer::{MultiSelect, theme::ColorfulTheme};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -46,7 +46,11 @@ impl ProfileManager {
     pub fn create(name: &str, from_base: bool, from: Option<&str>) -> Result<()> {
         let manifest_path = paths::profile_manifest(name);
         if manifest_path.exists() {
-            bail!("Profile '{}' already exists at {}", name, manifest_path.display());
+            bail!(
+                "Profile '{}' already exists at {}",
+                name,
+                manifest_path.display()
+            );
         }
         if paths::profile_dir(name).is_dir() {
             bail!(
@@ -59,9 +63,9 @@ impl ProfileManager {
         let manifest = if let Some(src) = from {
             let src_path = paths::profile_manifest(src);
             let content = fs::read_to_string(&src_path)
-                .with_context(|| format!("Failed to read profile '{}'", src))?;
+                .with_context(|| format!("Failed to read profile '{src}'"))?;
             serde_json::from_str::<ProfileManifest>(&content)
-                .with_context(|| format!("Failed to parse profile '{}'", src))?
+                .with_context(|| format!("Failed to parse profile '{src}'"))?
         } else if from_base {
             match Self::get_active() {
                 Some(ref name) => {
@@ -70,7 +74,9 @@ impl ProfileManager {
                         let content = fs::read_to_string(&src_path)?;
                         serde_json::from_str(&content)?
                     } else {
-                        bail!("Active profile '{}' is not a JSON manifest (old format?). Use 'pim migrate' first.", name)
+                        bail!(
+                            "Active profile '{name}' is not a JSON manifest (old format?). Use 'pim migrate' first."
+                        )
                     }
                 }
                 None => bail!("No active profile to copy from"),
@@ -80,16 +86,17 @@ impl ProfileManager {
         };
 
         fs::create_dir_all(paths::profiles_root())?;
-        let json = serde_json::to_string_pretty(&manifest)
-            .context("Failed to serialize manifest")?;
+        let json =
+            serde_json::to_string_pretty(&manifest).context("Failed to serialize manifest")?;
         fs::write(&manifest_path, &json)
             .with_context(|| format!("Failed to write {}", manifest_path.display()))?;
 
-        println!("✅ Created profile '{}'", name);
+        println!("✅ Created profile '{name}'");
         Ok(())
     }
 
     /// List all available profiles.
+    #[allow(clippy::unnecessary_wraps)]
     pub fn list() -> Result<()> {
         let root = paths::profiles_root();
         if !root.exists() {
@@ -106,7 +113,7 @@ impl ProfileManager {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("json")
-                    && entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+                    && entry.file_type().is_ok_and(|t| t.is_file())
                     && entry.file_name() != "pim.json"
                 {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
@@ -137,10 +144,18 @@ impl ProfileManager {
             let is_active = active.as_deref() == Some(name.as_str());
             let is_default = default.as_deref() == Some(name.as_str());
             let mut markers = Vec::new();
-            if is_active { markers.push("active"); }
-            if is_default { markers.push("default"); }
-            let suffix = if markers.is_empty() { String::new() } else { format!(" ◀ {}", markers.join(", ")) };
-            println!("  {}{}", name, suffix);
+            if is_active {
+                markers.push("active");
+            }
+            if is_default {
+                markers.push("default");
+            }
+            let suffix = if markers.is_empty() {
+                String::new()
+            } else {
+                format!(" ◀ {}", markers.join(", "))
+            };
+            println!("  {name}{suffix}");
             found = true;
         }
 
@@ -148,14 +163,18 @@ impl ProfileManager {
             let is_active = active.as_deref() == Some(name.as_str());
             let is_default = default.as_deref() == Some(name.as_str());
             let mut markers = Vec::new();
-            if is_active { markers.push("active"); }
-            if is_default { markers.push("default"); }
+            if is_active {
+                markers.push("active");
+            }
+            if is_default {
+                markers.push("default");
+            }
             let suffix = if markers.is_empty() {
                 String::new()
             } else {
                 format!(" ◀ {} (old format, run pim migrate)", markers.join(", "))
             };
-            println!("  {}{}", name, suffix);
+            println!("  {name}{suffix}");
             found = true;
         }
 
@@ -167,35 +186,33 @@ impl ProfileManager {
     }
 
     /// Show current status.
+    #[allow(clippy::unnecessary_wraps)]
     pub fn status() -> Result<()> {
         let active = Self::get_active();
         let default = Self::get_default();
 
-        match &active {
-            Some(name) => {
-                let manifest = paths::profile_manifest(name);
-                if manifest.exists() {
-                    let ext_count = Self::count_selected(name, "extensions").unwrap_or(0);
-                    let skill_count = Self::count_selected(name, "skills").unwrap_or(0);
-                    println!("Active profile: {} ({} extensions, {} skills)", name, ext_count, skill_count);
-                } else {
-                    println!("Active profile: {} (pre-migration format)", name);
-                }
+        if let Some(name) = &active {
+            let manifest = paths::profile_manifest(name);
+            if manifest.exists() {
+                let ext_count = Self::count_selected(name, "extensions").unwrap_or(0);
+                let skill_count = Self::count_selected(name, "skills").unwrap_or(0);
+                println!("Active profile: {name} ({ext_count} extensions, {skill_count} skills)");
+            } else {
+                println!("Active profile: {name} (pre-migration format)");
             }
-            None => {
-                let agent = paths::agent_dir();
-                if agent.is_dir() && !agent.is_symlink() {
-                    println!("~/.pi/agent is a regular directory (not managed by pim)");
-                } else if !agent.exists() {
-                    println!("~/.pi/agent does not exist (pi not configured yet)");
-                } else {
-                    println!("~/.pi/agent exists but is not a pim profile symlink");
-                }
+        } else {
+            let agent = paths::agent_dir();
+            if agent.is_dir() && !agent.is_symlink() {
+                println!("~/.pi/agent is a regular directory (not managed by pim)");
+            } else if !agent.exists() {
+                println!("~/.pi/agent does not exist (pi not configured yet)");
+            } else {
+                println!("~/.pi/agent exists but is not a pim profile symlink");
             }
         }
 
         match &default {
-            Some(name) => println!("Default profile: {}", name),
+            Some(name) => println!("Default profile: {name}"),
             None => println!("No default profile set"),
         }
 
@@ -207,13 +224,13 @@ impl ProfileManager {
         let manifest = paths::profile_manifest(name);
         let old_dir = paths::profile_dir(name);
         if !manifest.exists() && !old_dir.is_dir() {
-            bail!("Profile '{}' does not exist", name);
+            bail!("Profile '{name}' does not exist");
         }
         let root = paths::pi_manager_root();
         fs::create_dir_all(&root)?;
         fs::write(paths::default_file(), name)
-            .with_context(|| format!("Failed to write default profile '{}'", name))?;
-        println!("✅ Default profile set to '{}'", name);
+            .with_context(|| format!("Failed to write default profile '{name}'"))?;
+        println!("✅ Default profile set to '{name}'");
         Ok(())
     }
 
@@ -231,13 +248,17 @@ impl ProfileManager {
 
         let manifest_path = paths::profile_manifest(name);
         if !manifest_path.exists() {
-            bail!("Profile '{}' does not exist at {}", name, manifest_path.display());
+            bail!(
+                "Profile '{}' does not exist at {}",
+                name,
+                manifest_path.display()
+            );
         }
 
         let content = fs::read_to_string(&manifest_path)
-            .with_context(|| format!("Failed to read profile '{}'", name))?;
+            .with_context(|| format!("Failed to read profile '{name}'"))?;
         let manifest: ProfileManifest = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse profile '{}'", name))?;
+            .with_context(|| format!("Failed to parse profile '{name}'"))?;
 
         let active_dir = paths::active_dir(name);
         if active_dir.exists() {
@@ -254,15 +275,19 @@ impl ProfileManager {
         let ext_count = manifest.select.extensions.len();
         let skill_count = manifest.select.skills.len();
         let prompt_count = manifest.select.prompts.len();
-        println!("✅ Activated profile '{}' — {} extensions, {} skills, {} prompts", name, ext_count, skill_count, prompt_count);
+        println!(
+            "✅ Activated profile '{name}' — {ext_count} extensions, {skill_count} skills, {prompt_count} prompts"
+        );
         Ok(())
     }
 
     /// Activate the default profile.
     pub fn use_default() -> Result<()> {
-        match Self::get_default() {
-            Some(name) => Self::use_profile(&name),
-            None => { println!("No default profile set."); Self::status() }
+        if let Some(name) = Self::get_default() {
+            Self::use_profile(&name)
+        } else {
+            println!("No default profile set.");
+            Self::status()
         }
     }
 
@@ -273,14 +298,14 @@ impl ProfileManager {
         let data = paths::data_dir(name);
 
         if !manifest.exists() && !old_dir.is_dir() {
-            bail!("Profile '{}' does not exist", name);
+            bail!("Profile '{name}' does not exist");
         }
 
         let is_active = Self::get_active().as_deref() == Some(name);
         let is_default = Self::get_default().as_deref() == Some(name);
 
         if !force {
-            eprintln!("Are you sure you want to delete profile '{}'? [y/N] ", name);
+            eprintln!("Are you sure you want to delete profile '{name}'? [y/N] ");
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
             if input.trim().to_lowercase() != "y" {
@@ -318,7 +343,7 @@ impl ProfileManager {
             }
         }
 
-        println!("✅ Deleted profile '{}'", name);
+        println!("✅ Deleted profile '{name}'");
         Ok(())
     }
 
@@ -326,15 +351,19 @@ impl ProfileManager {
     pub fn edit(name: &str) -> Result<()> {
         let manifest_path = paths::profile_manifest(name);
         if !manifest_path.exists() {
-            bail!("Profile '{}' does not exist at {}", name, manifest_path.display());
+            bail!(
+                "Profile '{}' does not exist at {}",
+                name,
+                manifest_path.display()
+            );
         }
 
         let content = fs::read_to_string(&manifest_path)
-            .with_context(|| format!("Failed to read profile '{}'", name))?;
+            .with_context(|| format!("Failed to read profile '{name}'"))?;
         let mut manifest: ProfileManifest = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse profile '{}'", name))?;
+            .with_context(|| format!("Failed to parse profile '{name}'"))?;
 
-        println!("✏️  Editing selections for profile '{}'", name);
+        println!("✏️  Editing selections for profile '{name}'");
 
         // 1. Extensions
         let all_extensions = Self::list_pool_items("extensions");
@@ -409,12 +438,12 @@ impl ProfileManager {
         }
 
         // Write manifest back
-        let json = serde_json::to_string_pretty(&manifest)
-            .context("Failed to serialize manifest")?;
+        let json =
+            serde_json::to_string_pretty(&manifest).context("Failed to serialize manifest")?;
         fs::write(&manifest_path, &json)
             .with_context(|| format!("Failed to write {}", manifest_path.display()))?;
 
-        println!("✅ Profile '{}' updated successfully.", name);
+        println!("✅ Profile '{name}' updated successfully.");
 
         // Auto-rebuild active view if active
         let active = Self::get_active();
@@ -441,6 +470,7 @@ impl ProfileManager {
     }
 
     /// Migrate all old-style profiles to the new format.
+    #[allow(clippy::unnecessary_wraps)]
     pub fn migrate() -> Result<()> {
         let root = paths::profiles_root();
         if !root.exists() {
@@ -457,7 +487,9 @@ impl ProfileManager {
                 let path = entry.path();
                 if path.is_dir() && !path.is_symlink() {
                     if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                        if name == ".active" { continue; }
+                        if name == ".active" {
+                            continue;
+                        }
                         if paths::profile_manifest(name).exists() {
                             skipped += 1;
                             continue;
@@ -465,27 +497,32 @@ impl ProfileManager {
                         match Self::migrate_one(name) {
                             Ok(()) => {
                                 migrated += 1;
-                                println!("  ✔ Migrated '{}'", name);
+                                println!("  ✔ Migrated '{name}'");
                                 if active.as_deref() == Some(name) {
                                     if let Err(e) = Self::use_profile(name) {
-                                        eprintln!("  ⚠ Failed to activate migrated active profile '{}': {}", name, e);
+                                        eprintln!(
+                                            "  ⚠ Failed to activate migrated active profile '{name}': {e}"
+                                        );
                                     }
                                 }
                             }
-                            Err(e) => { eprintln!("  ✘ Failed to migrate '{}': {}", name, e); }
+                            Err(e) => {
+                                eprintln!("  ✘ Failed to migrate '{name}': {e}");
+                            }
                         }
                     }
                 }
             }
         }
 
-        println!("Migration complete: {} migrated, {} already up-to-date", migrated, skipped);
+        println!("Migration complete: {migrated} migrated, {skipped} already up-to-date");
         Ok(())
     }
 
     // ─── Profile migration ──────────────────────────────────────
 
     /// Migrate a single old-style profile directory to the new format.
+    #[allow(clippy::too_many_lines)]
     fn migrate_one(name: &str) -> Result<()> {
         let old_dir = paths::profile_dir(name);
         if !old_dir.is_dir() {
@@ -555,8 +592,14 @@ impl ProfileManager {
         if mcp_path.exists() {
             let content = fs::read_to_string(&mcp_path)?;
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                manifest.mcp_servers = val.get("mcpServers").cloned().unwrap_or(serde_json::Value::Null);
-                manifest.mcp_settings = val.get("settings").cloned().unwrap_or(serde_json::Value::Null);
+                manifest.mcp_servers = val
+                    .get("mcpServers")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                manifest.mcp_settings = val
+                    .get("settings")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
             }
         }
 
@@ -623,7 +666,7 @@ impl ProfileManager {
             if src.exists() {
                 Self::symlink_item(&src, &link)?;
             } else {
-                eprintln!("  ⚠ Extension '{}' not found in pool", item);
+                eprintln!("  ⚠ Extension '{item}' not found in pool");
             }
         }
 
@@ -633,7 +676,7 @@ impl ProfileManager {
             if src.exists() {
                 Self::symlink_item(&src, &link)?;
             } else {
-                eprintln!("  ⚠ Skill '{}' not found in pool", item);
+                eprintln!("  ⚠ Skill '{item}' not found in pool");
             }
         }
 
@@ -643,7 +686,7 @@ impl ProfileManager {
             if src.exists() {
                 Self::symlink_item(&src, &link)?;
             } else {
-                eprintln!("  ⚠ Prompt '{}' not found in pool", item);
+                eprintln!("  ⚠ Prompt '{item}' not found in pool");
             }
         }
 
@@ -662,8 +705,7 @@ impl ProfileManager {
                 mcp.insert("settings".to_string(), manifest.mcp_settings.clone());
             }
             let mcp_str = serde_json::to_string_pretty(&mcp)?;
-            fs::write(dst.join(MCP_CONFIG_FILE), &mcp_str)
-                .context("Failed to write mcp.json")?;
+            fs::write(dst.join(MCP_CONFIG_FILE), &mcp_str).context("Failed to write mcp.json")?;
         }
 
         Ok(())
@@ -734,11 +776,21 @@ impl ProfileManager {
             fs::create_dir_all(parent)?;
         }
         #[cfg(unix)]
-        std::os::unix::fs::symlink(target, link)
-            .with_context(|| format!("Failed to symlink {} → {}", link.display(), target.display()))?;
+        std::os::unix::fs::symlink(target, link).with_context(|| {
+            format!(
+                "Failed to symlink {} → {}",
+                link.display(),
+                target.display()
+            )
+        })?;
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(target, link)
-            .with_context(|| format!("Failed to symlink {} → {}", link.display(), target.display()))?;
+        std::os::windows::fs::symlink_file(target, link).with_context(|| {
+            format!(
+                "Failed to symlink {} → {}",
+                link.display(),
+                target.display()
+            )
+        })?;
         Ok(())
     }
 
@@ -771,10 +823,15 @@ impl ProfileManager {
         let profiles_root = paths::profiles_root();
 
         if target.starts_with(&active_root) {
-            target.components().next_back()
-                .and_then(|c| c.as_os_str().to_str().map(|s| s.to_string()))
+            target
+                .components()
+                .next_back()
+                .and_then(|c| c.as_os_str().to_str().map(std::string::ToString::to_string))
         } else if target.starts_with(&profiles_root) {
-            target.file_name()?.to_str().map(|s| s.to_string())
+            target
+                .file_name()?
+                .to_str()
+                .map(std::string::ToString::to_string)
         } else {
             None
         }
@@ -786,9 +843,8 @@ impl ProfileManager {
         if !agent.is_symlink() {
             return Ok(());
         }
-        let target = match fs::read_link(&agent) {
-            Ok(t) => t,
-            Err(_) => return Ok(()),
+        let Ok(target) = fs::read_link(&agent) else {
+            return Ok(());
         };
         let profiles_root = paths::profiles_root();
         let old_merged_root = paths::pi_manager_root().join(".merged");
@@ -798,7 +854,7 @@ impl ProfileManager {
                 let manifest_exists = paths::profile_manifest(name).exists();
                 let dir_exists = paths::profile_dir(name).is_dir();
                 if manifest_exists || dir_exists {
-                    println!("⚙️  Auto-healing active profile symlink for '{}'...", name);
+                    println!("⚙️  Auto-healing active profile symlink for '{name}'...");
                     Self::use_profile(name)?;
                 }
             }
@@ -839,16 +895,26 @@ impl ProfileManager {
             fs::create_dir_all(parent)?;
         }
 
-        let abs_target = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+        let abs_target = target
+            .canonicalize()
+            .unwrap_or_else(|_| target.to_path_buf());
 
         #[cfg(unix)]
         std::os::unix::fs::symlink(&abs_target, &agent).with_context(|| {
-            format!("Failed to create symlink: {} → {}", agent.display(), abs_target.display())
+            format!(
+                "Failed to create symlink: {} → {}",
+                agent.display(),
+                abs_target.display()
+            )
         })?;
 
         #[cfg(windows)]
         std::os::windows::fs::symlink_dir(&abs_target, &agent).with_context(|| {
-            format!("Failed to create symlink: {} → {}", agent.display(), abs_target.display())
+            format!(
+                "Failed to create symlink: {} → {}",
+                agent.display(),
+                abs_target.display()
+            )
         })?;
 
         Ok(())
@@ -868,6 +934,7 @@ impl Default for ProfileManifest {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unsafe_code)]
     use super::*;
     use std::fs;
     use std::path::PathBuf;
@@ -1022,12 +1089,12 @@ mod tests {
     fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
         let _guard = HOME_LOCK.lock().unwrap();
         let old_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", home);
+        unsafe { std::env::set_var("HOME", home) };
         let result = f();
         if let Some(h) = old_home {
-            std::env::set_var("HOME", h);
+            unsafe { std::env::set_var("HOME", h) };
         } else {
-            std::env::remove_var("HOME");
+            unsafe { std::env::remove_var("HOME") };
         }
         result
     }
@@ -1036,12 +1103,16 @@ mod tests {
     fn test_migrate_one_basic() {
         let (_tmp, home) = sandbox();
         let name = "test-profile";
-        create_old_profile(&home, name, &[
-            ("extensions/rtk.ts", "// extension"),
-            ("skills/web-research/SKILL.md", "# skill"),
-            ("settings.json", r#"{"theme": "dark"}"#),
-            ("auth.json", r#"{"apiKey": "sk-..."}"#),
-        ]);
+        create_old_profile(
+            &home,
+            name,
+            &[
+                ("extensions/rtk.ts", "// extension"),
+                ("skills/web-research/SKILL.md", "# skill"),
+                ("settings.json", r#"{"theme": "dark"}"#),
+                ("auth.json", r#"{"apiKey": "sk-..."}"#),
+            ],
+        );
 
         with_home(&home, || {
             fs::create_dir_all(home.join(".pi-manager").join("pool").join("extensions")).unwrap();
@@ -1051,16 +1122,37 @@ mod tests {
             assert!(result.is_ok(), "migrate_one failed: {:?}", result.err());
         });
 
-        let mpath = home.join(".pi-manager").join("profiles").join(format!("{}.json", name));
+        let mpath = home
+            .join(".pi-manager")
+            .join("profiles")
+            .join(format!("{name}.json"));
         assert!(mpath.exists(), "manifest should exist");
         let content = read_file(&mpath);
         let manifest: ProfileManifest = serde_json::from_str(&content).unwrap();
         assert_eq!(manifest.select.extensions, vec!["rtk.ts"]);
         assert_eq!(manifest.select.skills, vec!["web-research"]);
 
-        assert!(home.join(".pi-manager").join("pool").join("extensions").join("rtk.ts").exists());
-        assert!(home.join(".pi-manager").join("data").join(name).join("auth.json").exists());
-        assert!(!home.join(".pi-manager").join("profiles").join(name).exists());
+        assert!(
+            home.join(".pi-manager")
+                .join("pool")
+                .join("extensions")
+                .join("rtk.ts")
+                .exists()
+        );
+        assert!(
+            home.join(".pi-manager")
+                .join("data")
+                .join(name)
+                .join("auth.json")
+                .exists()
+        );
+        assert!(
+            !home
+                .join(".pi-manager")
+                .join("profiles")
+                .join(name)
+                .exists()
+        );
     }
 
     #[test]
@@ -1068,11 +1160,15 @@ mod tests {
         let (_tmp, home) = sandbox();
         let name = "test-mcp";
         let mcp_json = r#"{"mcpServers":{"fs":{"command":"npx"}},"settings":{"toolPrefix":"mcp"}}"#;
-        create_old_profile(&home, name, &[
-            ("mcp.json", mcp_json),
-            ("settings.json", r#"{"theme":"light"}"#),
-            ("auth.json", "{}"),
-        ]);
+        create_old_profile(
+            &home,
+            name,
+            &[
+                ("mcp.json", mcp_json),
+                ("settings.json", r#"{"theme":"light"}"#),
+                ("auth.json", "{}"),
+            ],
+        );
 
         with_home(&home, || {
             fs::create_dir_all(home.join(".pi-manager").join("pool").join("extensions")).unwrap();
@@ -1080,7 +1176,12 @@ mod tests {
             assert!(result.is_ok(), "migrate_one failed: {:?}", result.err());
         });
 
-        let content = read_file(&home.join(".pi-manager").join("profiles").join("test-mcp.json"));
+        let content = read_file(
+            &home
+                .join(".pi-manager")
+                .join("profiles")
+                .join("test-mcp.json"),
+        );
         let manifest: ProfileManifest = serde_json::from_str(&content).unwrap();
         assert_eq!(manifest.mcp_servers["fs"]["command"], "npx");
         assert_eq!(manifest.mcp_settings["toolPrefix"], "mcp");
@@ -1121,9 +1222,7 @@ mod tests {
     fn test_auto_heal_symlink() {
         let (_tmp, home) = sandbox();
         let name = "test-heal";
-        create_old_profile(&home, name, &[
-            ("settings.json", r#"{"theme": "dark"}"#),
-        ]);
+        create_old_profile(&home, name, &[("settings.json", r#"{"theme": "dark"}"#)]);
 
         with_home(&home, || {
             let agent = paths::agent_dir();
@@ -1147,10 +1246,14 @@ mod tests {
     fn test_auto_heal_broken_symlink() {
         let (_tmp, home) = sandbox();
         let name = "test-heal-broken";
-        
+
         with_home(&home, || {
             fs::create_dir_all(paths::profiles_root()).unwrap();
-            fs::write(paths::profile_manifest(name), r#"{"select":{"extensions":[],"skills":[]}}"#).unwrap();
+            fs::write(
+                paths::profile_manifest(name),
+                r#"{"select":{"extensions":[],"skills":[]}}"#,
+            )
+            .unwrap();
 
             let agent = paths::agent_dir();
             fs::create_dir_all(agent.parent().unwrap()).unwrap();
@@ -1176,7 +1279,11 @@ mod tests {
         let name = "test-valid";
         with_home(&home, || {
             fs::create_dir_all(paths::profiles_root()).unwrap();
-            fs::write(paths::profile_manifest(name), r#"{"select":{"extensions":[],"skills":[]}}"#).unwrap();
+            fs::write(
+                paths::profile_manifest(name),
+                r#"{"select":{"extensions":[],"skills":[]}}"#,
+            )
+            .unwrap();
 
             ProfileManager::use_profile(name).unwrap();
 

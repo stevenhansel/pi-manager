@@ -23,7 +23,7 @@
         packages.default = pimPackage;
         apps.default = flake-utils.lib.mkApp { drv = pimPackage; };
         devShells.default = pkgs.mkShell {
-          buildInputs = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ];
+          buildInputs = with pkgs; [ cargo rustc clippy rustfmt rust-analyzer cargo-audit ];
         };
       });
 }

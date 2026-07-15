@@ -8,7 +8,7 @@ use manager::ProfileManager;
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("❌ Error: {:#}", err);
+        eprintln!("❌ Error: {err:#}");
         std::process::exit(1);
     }
 }
@@ -18,20 +18,20 @@ fn run() -> anyhow::Result<()> {
 
     // Auto-heal the active profile symlink if it was pointing to an old-style format.
     if let Err(e) = ProfileManager::auto_heal_symlink() {
-        eprintln!("⚠️  Warning: Failed to auto-heal active profile symlink: {}", e);
+        eprintln!("⚠️  Warning: Failed to auto-heal active profile symlink: {e}");
     }
 
     match cli.command {
-        Some(Commands::Create { name, from, from_base }) => {
-            ProfileManager::create(&name, from_base, from.as_deref())
-        }
+        Some(Commands::Create {
+            name,
+            from,
+            from_base,
+        }) => ProfileManager::create(&name, from_base, from.as_deref()),
         Some(Commands::Migrate) => ProfileManager::migrate(),
         Some(Commands::List) => ProfileManager::list(),
         Some(Commands::Status) => ProfileManager::status(),
         Some(Commands::SetDefault { name }) => ProfileManager::set_default(&name),
-        Some(Commands::Use { name }) => {
-            ProfileManager::use_profile(&name)
-        }
+        Some(Commands::Use { name }) => ProfileManager::use_profile(&name),
         Some(Commands::Delete { name, force }) => ProfileManager::delete(&name, force),
         Some(Commands::Edit { name }) => ProfileManager::edit(&name),
         None => {
