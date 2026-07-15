@@ -59,8 +59,7 @@ impl Sandbox {
         );
         assert!(
             profile_dir.join("manifest.json").exists(),
-            "Profile '{}' should have manifest.json",
-            name
+            "Profile '{name}' should have manifest.json"
         );
         // pim.json should have this profile as default
         let pim_config = self.home.join(".pi-manager").join("pim.json");
@@ -69,8 +68,7 @@ impl Sandbox {
             serde_json::from_str(&fs::read_to_string(&pim_config).unwrap()).unwrap();
         assert_eq!(
             content["defaultProfile"], name,
-            "Default should be set to '{}'",
-            name
+            "Default should be set to '{name}'"
         );
         // ~/.pi/agent should NOT be touched by pim
         let agent = self.agent_dir();

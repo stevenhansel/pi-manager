@@ -1151,7 +1151,9 @@ mod tests {
     static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
-        let _guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let old_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", home) };
         let result = f();
