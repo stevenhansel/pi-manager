@@ -1,6 +1,5 @@
 use crate::paths;
 use anyhow::{Context, Result, bail};
-use dialoguer::{MultiSelect, theme::ColorfulTheme};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -36,6 +35,10 @@ struct ProfileManifest {
     /// These take priority over pool defaults (`config.default.json`).
     #[serde(default)]
     configs: HashMap<String, serde_json::Value>,
+
+    /// Per-profile environment variables injected when launching pi.
+    #[serde(default)]
+    env: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -47,6 +50,9 @@ struct Selection {
     skills: Vec<String>,
     #[serde(default)]
     prompts: Vec<String>,
+    /// MCP servers selected from pool/mcp/.
+    #[serde(default)]
+    mcp_servers: Vec<String>,
 }
 
 pub struct ProfileManager;
@@ -278,7 +284,7 @@ impl ProfileManager {
         Ok(())
     }
 
-    /// Edit a profile's selections interactively.
+    /// Edit a profile's selections interactively (TUI).
     pub fn edit(name: &str) -> Result<()> {
         let manifest_path = paths::profile_manifest(name);
         if !manifest_path.exists() {
@@ -291,86 +297,43 @@ impl ProfileManager {
 
         let content = fs::read_to_string(&manifest_path)
             .with_context(|| format!("Failed to read profile '{name}'"))?;
-        let mut manifest: ProfileManifest = serde_json::from_str(&content)
+        let manifest: ProfileManifest = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse profile '{name}'"))?;
 
-        println!("✏️  Editing selections for profile '{name}'");
+        println!("✨ Opening TUI editor for profile '{name}'...");
 
-        // 1. Extensions
-        let all_extensions = Self::list_pool_items("extensions");
-        if all_extensions.is_empty() {
-            println!("ℹ️  No extensions found in global pool.");
-        } else {
-            let defaults: Vec<bool> = all_extensions
-                .iter()
-                .map(|item| manifest.select.extensions.contains(item))
-                .collect();
+        // Run the TUI
+        let result = crate::tui::run_editor(
+            name,
+            &manifest.select.extensions,
+            &manifest.select.skills,
+            &manifest.select.prompts,
+            &manifest.select.mcp_servers,
+        )?;
 
-            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
-                .with_prompt("Select Extensions (Space to toggle, Enter to confirm)")
-                .items(&all_extensions)
-                .defaults(&defaults)
-                .interact_opt()?;
-
-            if let Some(indices) = selections {
-                manifest.select.extensions = indices
-                    .into_iter()
-                    .map(|idx| all_extensions[idx].clone())
-                    .collect();
-            }
-        }
-
-        // 2. Skills
-        let all_skills = Self::list_pool_items("skills");
-        if all_skills.is_empty() {
-            println!("ℹ️  No skills found in global pool.");
-        } else {
-            let defaults: Vec<bool> = all_skills
-                .iter()
-                .map(|item| manifest.select.skills.contains(item))
-                .collect();
-
-            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
-                .with_prompt("Select Skills (Space to toggle, Enter to confirm)")
-                .items(&all_skills)
-                .defaults(&defaults)
-                .interact_opt()?;
-
-            if let Some(indices) = selections {
-                manifest.select.skills = indices
-                    .into_iter()
-                    .map(|idx| all_skills[idx].clone())
-                    .collect();
-            }
-        }
-
-        // 3. Prompts
-        let all_prompts = Self::list_pool_items("prompts");
-        if all_prompts.is_empty() {
-            println!("ℹ️  No prompts found in global pool.");
-        } else {
-            let defaults: Vec<bool> = all_prompts
-                .iter()
-                .map(|item| manifest.select.prompts.contains(item))
-                .collect();
-
-            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
-                .with_prompt("Select Prompts (Space to toggle, Enter to confirm)")
-                .items(&all_prompts)
-                .defaults(&defaults)
-                .interact_opt()?;
-
-            if let Some(indices) = selections {
-                manifest.select.prompts = indices
-                    .into_iter()
-                    .map(|idx| all_prompts[idx].clone())
-                    .collect();
+        // Apply selections from the TUI result
+        if !result.changed {
+            let same_exts =
+                Self::sets_equal(&result.selected_extensions, &manifest.select.extensions);
+            let same_skills = Self::sets_equal(&result.selected_skills, &manifest.select.skills);
+            let same_prompts = Self::sets_equal(&result.selected_prompts, &manifest.select.prompts);
+            let same_mcp =
+                Self::sets_equal(&result.selected_mcp_servers, &manifest.select.mcp_servers);
+            if same_exts && same_skills && same_prompts && same_mcp {
+                println!("ℹ️ No changes made.");
+                return Ok(());
             }
         }
 
         // Write manifest back
+        let mut new_manifest = manifest;
+        new_manifest.select.extensions = result.selected_extensions;
+        new_manifest.select.skills = result.selected_skills;
+        new_manifest.select.prompts = result.selected_prompts;
+        new_manifest.select.mcp_servers = result.selected_mcp_servers;
+
         let json =
-            serde_json::to_string_pretty(&manifest).context("Failed to serialize manifest")?;
+            serde_json::to_string_pretty(&new_manifest).context("Failed to serialize manifest")?;
         fs::write(&manifest_path, &json)
             .with_context(|| format!("Failed to write {}", manifest_path.display()))?;
 
@@ -386,8 +349,21 @@ impl ProfileManager {
         Ok(())
     }
 
+    /// Check if two string slices contain the same elements (order-independent).
+    fn sets_equal(a: &[String], b: &[String]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut a_sorted = a.to_vec();
+        let mut b_sorted = b.to_vec();
+        a_sorted.sort();
+        b_sorted.sort();
+        a_sorted == b_sorted
+    }
+
     // ─── Pool introspection ─────────────────────────────────────
 
+    #[allow(dead_code)]
     fn list_pool_items(subdir: &str) -> Vec<String> {
         let path = paths::pool_dir().join(subdir);
         let mut items = Vec::new();
@@ -413,12 +389,17 @@ impl ProfileManager {
     ///
     /// Runtime state (sessions, auth, models) already live in the profile dir
     /// and are left untouched.
+    #[allow(clippy::too_many_lines)]
     fn build_profile(manifest: &ProfileManifest, profile_dir: &Path) -> Result<()> {
+        const RUNTIME_KEYS: &[&str] = &["lastChangelogVersion"];
+
         // Ensure subdirectories exist
         for sub in &["extensions", "skills", "prompts", "config", "sessions"] {
             fs::create_dir_all(profile_dir.join(sub))
                 .with_context(|| format!("Failed to create {sub} directory"))?;
         }
+        // Ensure pool MCP directory exists for reading server configs
+        fs::create_dir_all(paths::pool_mcp_dir()).context("Failed to create pool MCP directory")?;
 
         let pool = paths::pool_dir();
 
@@ -499,36 +480,136 @@ impl ProfileManager {
         }
 
         // --- Generate settings.json ---
-        if manifest.settings.is_null() {
-            let settings_path = profile_dir.join("settings.json");
+        // Merge manifest settings with existing runtime settings (e.g.
+        // lastChangelogVersion written by pi). Manifest values take priority.
+        let settings_path = profile_dir.join("settings.json");
+        let mut merged = if let Ok(content) = fs::read_to_string(&settings_path) {
+            serde_json::from_str::<serde_json::Value>(&content).unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::Value::Null
+        };
+
+        if let Some(existing) = merged.as_object_mut() {
+            if let Some(manifest_obj) = manifest.settings.as_object() {
+                for (key, val) in manifest_obj {
+                    if !RUNTIME_KEYS.contains(&key.as_str()) {
+                        existing.insert(key.clone(), val.clone());
+                    }
+                }
+            }
+        } else {
+            merged = manifest.settings.clone();
+            // Strip runtime keys from fresh manifest settings
+            if let Some(obj) = merged.as_object_mut() {
+                for key in RUNTIME_KEYS {
+                    obj.remove(*key);
+                }
+            }
+        }
+
+        if merged.is_null() || (merged.as_object().is_some_and(serde_json::Map::is_empty)) {
             if settings_path.exists() {
                 fs::remove_file(&settings_path).ok();
             }
         } else {
-            let settings_str = serde_json::to_string_pretty(&manifest.settings)?;
-            fs::write(profile_dir.join("settings.json"), &settings_str)
-                .context("Failed to write settings.json")?;
+            let settings_str = serde_json::to_string_pretty(&merged)?;
+            fs::write(&settings_path, &settings_str).context("Failed to write settings.json")?;
         }
 
         // --- Generate mcp.json ---
+        // Builds from pool/mcp/<name>/mcp.json for each selected server,
+        // with template substitution from config/<name>.json.
+        // Falls back to inline mcpServers from the manifest for backward compat.
         let mcp_path = profile_dir.join(MCP_CONFIG_FILE);
-        if manifest.mcp_servers.is_null() && manifest.mcp_settings.is_null() {
-            if mcp_path.exists() {
-                fs::remove_file(&mcp_path).ok();
+        let config_dir = profile_dir.join("config");
+
+        let mut merged_servers = serde_json::Map::new();
+
+        // 1. Pool-based selections
+        for server_name in &manifest.select.mcp_servers {
+            let pool_entry = paths::pool_mcp_dir().join(server_name).join("mcp.json");
+            if let Ok(content) = fs::read_to_string(&pool_entry) {
+                if let Ok(mut config_value) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(config_obj) = config_value.as_object_mut() {
+                        // Strip TUI metadata — not a real MCP server config field
+                        config_obj.remove("config_fields");
+
+                        // Load per-profile config for template substitution
+                        let server_config_path = config_dir.join(format!("{server_name}.json"));
+                        if let Ok(config_content) = fs::read_to_string(&server_config_path) {
+                            if let Ok(user_config) =
+                                serde_json::from_str::<serde_json::Value>(&config_content)
+                            {
+                                Self::substitute_templates(&mut config_value, &user_config);
+                            }
+                        }
+
+                        merged_servers.insert(server_name.clone(), config_value);
+                    }
+                }
+            } else {
+                eprintln!("  ⚠ MCP server '{server_name}' not found in pool");
             }
-        } else {
+        }
+
+        // 2. Backward compat: inline mcpServers (not overridden by pool selection)
+        if let Some(inline_servers) = manifest.mcp_servers.as_object() {
+            for (name, config) in inline_servers {
+                if !merged_servers.contains_key(name) {
+                    merged_servers.insert(name.clone(), config.clone());
+                }
+            }
+        }
+
+        // 3. Write mcp.json if we have servers or settings
+        if !merged_servers.is_empty() || !manifest.mcp_settings.is_null() {
             let mut mcp = serde_json::Map::new();
-            if !manifest.mcp_servers.is_null() {
-                mcp.insert("mcpServers".to_string(), manifest.mcp_servers.clone());
-            }
+            mcp.insert(
+                "mcpServers".to_string(),
+                serde_json::Value::Object(merged_servers),
+            );
             if !manifest.mcp_settings.is_null() {
                 mcp.insert("settings".to_string(), manifest.mcp_settings.clone());
             }
             let mcp_str = serde_json::to_string_pretty(&mcp)?;
-            fs::write(mcp_path, &mcp_str).context("Failed to write mcp.json")?;
+            fs::write(&mcp_path, &mcp_str).context("Failed to write mcp.json")?;
+        } else if mcp_path.exists() {
+            fs::remove_file(&mcp_path).ok();
         }
 
         Ok(())
+    }
+
+    /// Recursively walk a JSON value and substitute {key} placeholders
+    /// with values from the user config.
+    fn substitute_templates(value: &mut serde_json::Value, config: &serde_json::Value) {
+        match value {
+            serde_json::Value::String(s) => {
+                if let Some(config_obj) = config.as_object() {
+                    for (key, val) in config_obj {
+                        let placeholder = format!("{{{key}}}");
+                        if s.contains(&placeholder) {
+                            let replacement = match val {
+                                serde_json::Value::String(v) => v.clone(),
+                                other => other.to_string(),
+                            };
+                            *s = s.replace(&placeholder, &replacement);
+                        }
+                    }
+                }
+            }
+            serde_json::Value::Object(obj) => {
+                for (_key, val) in obj.iter_mut() {
+                    Self::substitute_templates(val, config);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for val in arr.iter_mut() {
+                    Self::substitute_templates(val, config);
+                }
+            }
+            _ => {}
+        }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────
@@ -668,6 +749,7 @@ impl ProfileManager {
             "extensions" => Ok(manifest.select.extensions.len()),
             "skills" => Ok(manifest.select.skills.len()),
             "prompts" => Ok(manifest.select.prompts.len()),
+            "mcp_servers" => Ok(manifest.select.mcp_servers.len()),
             "configs" => Ok(manifest.configs.len()),
             _ => Ok(0),
         }
@@ -688,22 +770,36 @@ impl ProfileManager {
             bail!("Profile '{profile}' does not exist — create it with 'pim create {profile}'");
         }
 
+        // Read manifest to inject per-profile env vars
+        let manifest_content = fs::read_to_string(profile_dir.join("manifest.json"))
+            .with_context(|| format!("Failed to read manifest for profile '{profile}'"))?;
+        let manifest: ProfileManifest = serde_json::from_str(&manifest_content)
+            .with_context(|| format!("Failed to parse manifest for profile '{profile}'"))?;
+
         #[cfg(unix)]
         {
-            let err = std::process::Command::new("pi")
-                .args(pi_args)
-                .env("PI_CODING_AGENT_DIR", &profile_dir)
-                .exec();
+            let mut cmd = std::process::Command::new("pi");
+            cmd.args(pi_args);
+            cmd.env("PI_CODING_AGENT_DIR", &profile_dir);
+
+            // Inject per-profile env vars — override parent shell values
+            for (key, val) in &manifest.env {
+                cmd.env(key, val);
+            }
+
+            let err = cmd.exec();
             bail!("Failed to exec pi: {err}");
         }
 
         #[cfg(not(unix))]
         {
-            let status = std::process::Command::new("pi")
-                .args(pi_args)
-                .env("PI_CODING_AGENT_DIR", &profile_dir)
-                .status()
-                .context("Failed to run pi")?;
+            let mut cmd = std::process::Command::new("pi");
+            cmd.args(pi_args);
+            cmd.env("PI_CODING_AGENT_DIR", &profile_dir);
+            for (key, val) in &manifest.env {
+                cmd.env(key, val);
+            }
+            let status = cmd.status().context("Failed to run pi")?;
             std::process::exit(status.code().unwrap_or(0));
         }
     }
@@ -739,6 +835,7 @@ impl Default for ProfileManifest {
             mcp_servers: serde_json::Value::Null,
             mcp_settings: serde_json::Value::Null,
             configs: HashMap::new(),
+            env: HashMap::new(),
         }
     }
 }
@@ -750,6 +847,7 @@ impl Selection {
             "extensions" => &self.extensions,
             "skills" => &self.skills,
             "prompts" => &self.prompts,
+            "mcp" => &self.mcp_servers,
             _ => &[],
         }
     }

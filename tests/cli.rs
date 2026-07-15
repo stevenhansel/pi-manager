@@ -325,11 +325,7 @@ fn test_delete_force_active_profile_removes_profile_dir() {
         .success();
 
     assert!(
-        !s.home()
-            .join(".pim")
-            .join("profiles")
-            .join("work")
-            .exists(),
+        !s.home().join(".pim").join("profiles").join("work").exists(),
         "profile directory should be removed"
     );
 }
@@ -389,11 +385,5 @@ fn test_create_then_list_then_use_then_delete_workflow() {
         .arg("--force")
         .assert()
         .success();
-    assert!(
-        !s.home()
-            .join(".pim")
-            .join("profiles")
-            .join("work")
-            .exists()
-    );
+    assert!(!s.home().join(".pim").join("profiles").join("work").exists());
 }

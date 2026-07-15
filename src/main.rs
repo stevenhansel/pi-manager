@@ -1,6 +1,8 @@
 mod cli;
 mod manager;
 mod paths;
+mod schema;
+mod tui;
 
 use clap::Parser;
 use cli::{Cli, Commands};

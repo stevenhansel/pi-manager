@@ -45,6 +45,10 @@ pub fn pool_prompts_dir() -> PathBuf {
     pool_dir().join("prompts")
 }
 
+pub fn pool_mcp_dir() -> PathBuf {
+    pool_dir().join("mcp")
+}
+
 /// Path to the global pim configuration file.
 pub fn pim_config() -> PathBuf {
     pi_manager_root().join("pim.json")

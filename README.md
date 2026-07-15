@@ -193,6 +193,26 @@ PI_CODING_AGENT_DIR=~/.pim/profiles/research pi -p "hello"
 `~/.pi/agent` from using pi directly, it remains intact as your default
 pi config. Running `pi` directly (without pim) will continue to use it.
 
+## Development
+
+### Pre-commit hooks
+
+This repo ships with git hooks in `.githooks/` that run the same lint checks as CI
+(`cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings`)
+before every commit. Enable them with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Now `git commit` will block if formatting or clippy issues are detected.
+
+### Release workflow
+
+Pushing a tag matching `v*` triggers the [release workflow](.github/workflows/release.yml)
+which builds binaries for Linux, macOS, and Windows, publishes a GitHub Release,
+and updates the APT repository on the `gh-pages` branch.
+
 ## Architecture
 
 pim uses a **resource pool configuration model** — see [`docs/configuration.md`](docs/configuration.md) for the full design.
