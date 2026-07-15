@@ -2,8 +2,12 @@ use crate::paths;
 use anyhow::{Context, Result, bail};
 use dialoguer::{MultiSelect, theme::ColorfulTheme};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
 
@@ -20,6 +24,10 @@ struct ProfileManifest {
     mcp_servers: serde_json::Value,
     #[serde(default)]
     mcp_settings: serde_json::Value,
+    /// Per-profile config files written into `config/` in the active view.
+    /// Keyed by filename (e.g. "searxng.json"), value is the JSON content.
+    #[serde(default)]
+    configs: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -196,7 +204,8 @@ impl ProfileManager {
             if manifest.exists() {
                 let ext_count = Self::count_selected(name, "extensions").unwrap_or(0);
                 let skill_count = Self::count_selected(name, "skills").unwrap_or(0);
-                println!("Active profile: {name} ({ext_count} extensions, {skill_count} skills)");
+                let config_count = Self::count_selected(name, "configs").unwrap_or(0);
+                println!("Active profile: {name} ({ext_count} extensions, {skill_count} skills, {config_count} configs)");
             } else {
                 println!("Active profile: {name} (pre-migration format)");
             }
@@ -234,7 +243,11 @@ impl ProfileManager {
         Ok(())
     }
 
-    /// Activate a profile by building its active view and pointing `~/.pi/agent` at it.
+    /// Build/refresh a profile's active view and set it as the default.
+    ///
+    /// Unlike the old behavior, this does NOT touch `~/.pi/agent` or remove
+    /// old active directories. Each profile's active view persists and is
+    /// used by `pim` launching pi with `PI_CODING_AGENT_DIR`.
     pub fn use_profile(name: &str) -> Result<()> {
         fs::create_dir_all(paths::pool_extensions_dir())?;
         fs::create_dir_all(paths::pool_skills_dir())?;
@@ -261,7 +274,10 @@ impl ProfileManager {
             .with_context(|| format!("Failed to parse profile '{name}'"))?;
 
         let active_dir = paths::active_dir(name);
+
+        // Sync runtime state (sessions, configs) from old active view to data dir
         if active_dir.exists() {
+            Self::sync_active_to_data(name, &active_dir)?;
             fs::remove_dir_all(&active_dir).context("Failed to remove previous active view")?;
         }
 
@@ -270,7 +286,13 @@ impl ProfileManager {
         fs::create_dir_all(paths::data_dir(name))?;
         Self::link_data_dir(name, &active_dir)?;
 
-        Self::set_agent_symlink(&active_dir)?;
+        // Write configs from manifest to data dir (seeds), then symlink into active view
+        Self::sync_configs_from_manifest(name, &manifest, &active_dir)?;
+
+        // Set this as default so `pim` (no args) launches it
+        fs::create_dir_all(paths::pi_manager_root())?;
+        fs::write(paths::default_file(), name)
+            .with_context(|| format!("Failed to write default profile '{name}'"))?;
 
         let ext_count = manifest.select.extensions.len();
         let skill_count = manifest.select.skills.len();
@@ -282,6 +304,7 @@ impl ProfileManager {
     }
 
     /// Activate the default profile.
+    #[allow(dead_code)]
     pub fn use_default() -> Result<()> {
         if let Some(name) = Self::get_default() {
             Self::use_profile(&name)
@@ -301,7 +324,6 @@ impl ProfileManager {
             bail!("Profile '{name}' does not exist");
         }
 
-        let is_active = Self::get_active().as_deref() == Some(name);
         let is_default = Self::get_default().as_deref() == Some(name);
 
         if !force {
@@ -327,13 +349,6 @@ impl ProfileManager {
         let active_dir = paths::active_dir(name);
         if active_dir.exists() {
             fs::remove_dir_all(&active_dir).ok();
-        }
-
-        if is_active {
-            let agent = paths::agent_dir();
-            if agent.is_symlink() {
-                fs::remove_file(&agent).ok();
-            }
         }
 
         if is_default {
@@ -653,7 +668,7 @@ impl ProfileManager {
 
     /// Build the effective agent directory from a manifest.
     fn build_from_manifest(manifest: &ProfileManifest, dst: &Path) -> Result<()> {
-        for sub in &["extensions", "skills", "prompts"] {
+        for sub in &["extensions", "skills", "prompts", "config"] {
             fs::create_dir_all(dst.join(sub))
                 .with_context(|| format!("Failed to create {sub} directory"))?;
         }
@@ -708,6 +723,10 @@ impl ProfileManager {
             fs::write(dst.join(MCP_CONFIG_FILE), &mcp_str).context("Failed to write mcp.json")?;
         }
 
+        // NOTE: Config files from manifest.configs are handled by
+        // sync_configs_from_manifest() which writes them to data/<name>/config/
+        // and symlinks into the active view for persistence across rebuilds.
+
         Ok(())
     }
 
@@ -725,6 +744,26 @@ impl ProfileManager {
             }
         }
 
+        // Symlink config files from data/<name>/config/ into active view
+        let data_config = paths::config_dir(name);
+        if data_config.exists() {
+            fs::create_dir_all(active_dir.join("config"))?;
+            if let Ok(entries) = fs::read_dir(&data_config) {
+                for entry in entries.flatten() {
+                    let ft = entry.file_type().ok();
+                    if ft.is_some_and(|t| t.is_file() || t.is_symlink()) {
+                        let filename = entry.file_name();
+                        let src = entry.path();
+                        let dst = active_dir.join("config").join(&filename);
+                        if !dst.exists() {
+                            Self::symlink_item(&src, &dst)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Symlink session files from data/<name>/sessions/ into active view
         let src_sessions = data.join("sessions");
         if src_sessions.exists() {
             let dst_sessions = active_dir.join("sessions");
@@ -812,53 +851,15 @@ impl ProfileManager {
         }
     }
 
-    /// Get the name of the currently active profile by reading the `~/.pi/agent` symlink.
+    /// Get the name of the currently set default profile.
+    /// Reads from the default file (no longer relies on `~/.pi/agent` symlink).
     pub fn get_active() -> Option<String> {
-        let agent = paths::agent_dir();
-        if !agent.is_symlink() {
-            return None;
-        }
-        let target = fs::read_link(&agent).ok()?;
-        let active_root = paths::active_root();
-        let profiles_root = paths::profiles_root();
-
-        if target.starts_with(&active_root) {
-            target
-                .components()
-                .next_back()
-                .and_then(|c| c.as_os_str().to_str().map(std::string::ToString::to_string))
-        } else if target.starts_with(&profiles_root) {
-            target
-                .file_name()?
-                .to_str()
-                .map(std::string::ToString::to_string)
-        } else {
-            None
-        }
+        Self::get_default()
     }
 
-    /// Auto-heals the agent symlink if it points to the old-style profiles path or the old .merged path.
+    /// No-op: symlink healing is no longer needed since we never touch `~/.pi/agent`.
+    #[allow(dead_code)]
     pub fn auto_heal_symlink() -> Result<()> {
-        let agent = paths::agent_dir();
-        if !agent.is_symlink() {
-            return Ok(());
-        }
-        let Ok(target) = fs::read_link(&agent) else {
-            return Ok(());
-        };
-        let profiles_root = paths::profiles_root();
-        let old_merged_root = paths::pi_manager_root().join(".merged");
-
-        if target.starts_with(&profiles_root) || target.starts_with(&old_merged_root) {
-            if let Some(name) = target.file_name().and_then(|s| s.to_str()) {
-                let manifest_exists = paths::profile_manifest(name).exists();
-                let dir_exists = paths::profile_dir(name).is_dir();
-                if manifest_exists || dir_exists {
-                    println!("⚙️  Auto-healing active profile symlink for '{name}'...");
-                    Self::use_profile(name)?;
-                }
-            }
-        }
         Ok(())
     }
 
@@ -874,48 +875,150 @@ impl ProfileManager {
             "extensions" => Ok(manifest.select.extensions.len()),
             "skills" => Ok(manifest.select.skills.len()),
             "prompts" => Ok(manifest.select.prompts.len()),
+            "configs" => Ok(manifest.configs.len()),
             _ => Ok(0),
         }
     }
 
-    /// Set `~/.pi/agent` as a symlink pointing to the given directory.
-    fn set_agent_symlink(target: &Path) -> Result<()> {
-        let agent = paths::agent_dir();
+    /// Launch pi with the given profile by setting `PI_CODING_AGENT_DIR`.
+    ///
+    /// This replaces the current process with pi (Unix exec) so signals
+    /// and Ctrl+C go directly to pi. Multiple pi instances can run
+    /// simultaneously from different terminals, each with their own profile.
+    pub fn launch_pi(profile: &str, pi_args: &[String]) -> Result<()> {
+        // Ensure active view exists
+        let active_dir = paths::active_dir(profile);
+        if !active_dir.exists() {
+            Self::use_profile(profile)?;
+        }
 
-        if agent.exists() || agent.is_symlink() {
-            if agent.is_dir() && !agent.is_symlink() {
-                fs::remove_dir_all(&agent)
-                    .context("Failed to remove existing ~/.pi/agent directory")?;
-            } else {
-                fs::remove_file(&agent).context("Failed to remove existing ~/.pi/agent")?;
+        #[cfg(unix)]
+        {
+            let err = std::process::Command::new("pi")
+                .args(pi_args)
+                .env("PI_CODING_AGENT_DIR", &active_dir)
+                .exec();
+            // exec only returns on failure
+            bail!("Failed to exec pi: {err}");
+        }
+
+        #[cfg(not(unix))]
+        {
+            let status = std::process::Command::new("pi")
+                .args(pi_args)
+                .env("PI_CODING_AGENT_DIR", &active_dir)
+                .status()
+                .context("Failed to run pi")?;
+            std::process::exit(status.code().unwrap_or(0));
+        }
+    }
+
+    /// Return a sorted list of all profile names.
+    pub fn list_profile_names() -> Result<Vec<String>> {
+        let mut profiles = Vec::new();
+        let root = paths::profiles_root();
+        if !root.exists() {
+            return Ok(profiles);
+        }
+        if let Ok(entries) = fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json")
+                    && entry.file_type().is_ok_and(|t| t.is_file())
+                    && entry.file_name() != "pim.json"
+                {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        profiles.push(stem.to_string());
+                    }
+                }
+            }
+        }
+        profiles.sort();
+        Ok(profiles)
+    }
+
+    /// Sync runtime state (sessions, configs) from the old active view to the data directory.
+    /// Called before rebuilding the active view.
+    fn sync_active_to_data(name: &str, active_dir: &Path) -> Result<()> {
+        let data = paths::data_dir(name);
+
+        // Sync config files from active view to data dir
+        let old_config = active_dir.join("config");
+        if old_config.exists() {
+            let data_config = paths::config_dir(name);
+            fs::create_dir_all(&data_config)?;
+            for entry in fs::read_dir(&old_config)? {
+                let entry = entry?;
+                let ft = entry.file_type()?;
+                if ft.is_file() || ft.is_symlink() {
+                    let filename = entry.file_name();
+                    let src = entry.path();
+                    let dst = data_config.join(&filename);
+
+                    // Only copy real files (not symlinks, those already point to data dir)
+                    if ft.is_file() && !ft.is_symlink() {
+                        fs::copy(&src, &dst)?;
+                    }
+                }
             }
         }
 
-        if let Some(parent) = agent.parent() {
-            fs::create_dir_all(parent)?;
+        // Sync session files from active view to data dir
+        let old_sessions = active_dir.join("sessions");
+        if old_sessions.exists() {
+            let data_sessions = data.join("sessions");
+            fs::create_dir_all(&data_sessions)?;
+            for entry in fs::read_dir(&old_sessions)? {
+                let entry = entry?;
+                let ft = entry.file_type()?;
+                if ft.is_file() || ft.is_symlink() {
+                    let filename = entry.file_name();
+                    let src = entry.path();
+                    let dst = data_sessions.join(&filename);
+                    if !dst.exists() {
+                        if ft.is_file() && !ft.is_symlink() {
+                            fs::copy(&src, &dst)?;
+                        }
+                        // Skip if it's already a symlink (already backed up)
+                    }
+                }
+            }
         }
 
-        let abs_target = target
-            .canonicalize()
-            .unwrap_or_else(|_| target.to_path_buf());
+        Ok(())
+    }
 
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&abs_target, &agent).with_context(|| {
-            format!(
-                "Failed to create symlink: {} → {}",
-                agent.display(),
-                abs_target.display()
-            )
-        })?;
+    /// Write configs from the manifest to the data dir (seeding), then symlink into active view.
+    /// If a config already exists in data dir (from runtime modification), it is preserved.
+    fn sync_configs_from_manifest(name: &str, manifest: &ProfileManifest, active_dir: &Path) -> Result<()> {
+        let data_config = paths::config_dir(name);
+        fs::create_dir_all(&data_config)?;
+        fs::create_dir_all(active_dir.join("config"))?;
 
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&abs_target, &agent).with_context(|| {
-            format!(
-                "Failed to create symlink: {} → {}",
-                agent.display(),
-                abs_target.display()
-            )
-        })?;
+        // Write configs from manifest to data dir (only if not already present)
+        for (filename, content) in &manifest.configs {
+            let data_path = data_config.join(filename);
+            if !data_path.exists() {
+                let content_str = serde_json::to_string_pretty(content)
+                    .with_context(|| format!("Failed to serialize config '{filename}'"))?;
+                fs::write(&data_path, &content_str)
+                    .with_context(|| format!("Failed to write config '{filename}'"))?;
+            }
+        }
+
+        // Symlink all data configs into active view
+        if data_config.exists() {
+            for entry in fs::read_dir(&data_config)? {
+                let entry = entry?;
+                let ft = entry.file_type()?;
+                if ft.is_file() {
+                    let filename = entry.file_name();
+                    let src = entry.path();
+                    let link = active_dir.join("config").join(&filename);
+                    Self::symlink_item(&src, &link)?;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -928,6 +1031,7 @@ impl Default for ProfileManifest {
             settings: serde_json::Value::Null,
             mcp_servers: serde_json::Value::Null,
             mcp_settings: serde_json::Value::Null,
+            configs: HashMap::new(),
         }
     }
 }
@@ -972,6 +1076,7 @@ mod tests {
         assert!(m.select.skills.is_empty());
         assert!(m.select.prompts.is_empty());
         assert!(m.settings.is_null());
+        assert!(m.configs.is_empty());
     }
 
     #[test]
@@ -1045,6 +1150,7 @@ mod tests {
         ProfileManager::build_from_manifest(&manifest, &dst).unwrap();
         assert!(dst.join("extensions").is_dir());
         assert!(dst.join("skills").is_dir());
+        assert!(dst.join("config").is_dir());
     }
 
     #[test]
@@ -1077,6 +1183,26 @@ mod tests {
         assert!(dst.join("mcp.json").exists());
     }
 
+    #[test]
+    fn test_build_manifest_with_configs_not_written_directly() {
+        // Config files are now handled by sync_configs_from_manifest(),
+        // not build_from_manifest(). The manifest's configs field seeds
+        // the data dir config, which is then symlinked into the active view.
+        let json = r#"{
+            "select": { "extensions": [], "skills": [] },
+            "configs": {
+                "searxng.json": { "baseUrl": "https://example.com" }
+            }
+        }"#;
+        let manifest: ProfileManifest = serde_json::from_str(json).unwrap();
+        let (_tmp, home) = sandbox();
+        let dst = home.join("active");
+        ProfileManager::build_from_manifest(&manifest, &dst).unwrap();
+        let config_file = dst.join("config").join("searxng.json");
+        // build_from_manifest no longer writes configs directly
+        assert!(!config_file.exists());
+    }
+
     // ─── Tests that modify HOME (must run sequentially) ────────
     //
     // These tests set $HOME to a tempdir so paths.rs resolves inside it.
@@ -1086,8 +1212,9 @@ mod tests {
     static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     /// Run a closure with HOME temporarily pointing to `home`.
+    /// Recovers from poisoned mutex (previous test panic).
     fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", home) };
         let result = f();
@@ -1219,62 +1346,17 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_heal_symlink() {
+    fn test_auto_heal_is_now_noop() {
+        // auto_heal_symlink is a no-op since we never touch ~/.pi/agent
         let (_tmp, home) = sandbox();
-        let name = "test-heal";
-        create_old_profile(&home, name, &[("settings.json", r#"{"theme": "dark"}"#)]);
-
         with_home(&home, || {
-            let agent = paths::agent_dir();
-            fs::create_dir_all(agent.parent().unwrap()).unwrap();
-            let old_dir = paths::profile_dir(name);
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&old_dir, &agent).unwrap();
-            #[cfg(windows)]
-            std::os::windows::fs::symlink_dir(&old_dir, &agent).unwrap();
-
             let result = ProfileManager::auto_heal_symlink();
             assert!(result.is_ok(), "auto_heal failed: {:?}", result.err());
-
-            assert!(agent.is_symlink());
-            let target = fs::read_link(&agent).unwrap();
-            assert_eq!(target, paths::active_dir(name));
         });
     }
 
     #[test]
-    fn test_auto_heal_broken_symlink() {
-        let (_tmp, home) = sandbox();
-        let name = "test-heal-broken";
-
-        with_home(&home, || {
-            fs::create_dir_all(paths::profiles_root()).unwrap();
-            fs::write(
-                paths::profile_manifest(name),
-                r#"{"select":{"extensions":[],"skills":[]}}"#,
-            )
-            .unwrap();
-
-            let agent = paths::agent_dir();
-            fs::create_dir_all(agent.parent().unwrap()).unwrap();
-            let old_dir = paths::profile_dir(name);
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&old_dir, &agent).unwrap();
-            #[cfg(windows)]
-            std::os::windows::fs::symlink_dir(&old_dir, &agent).unwrap();
-
-            let result = ProfileManager::auto_heal_symlink();
-            assert!(result.is_ok(), "auto_heal failed: {:?}", result.err());
-
-            assert!(agent.is_symlink());
-            let target = fs::read_link(&agent).unwrap();
-            assert_eq!(target, paths::active_dir(name));
-            assert!(paths::active_dir(name).exists());
-        });
-    }
-
-    #[test]
-    fn test_auto_heal_no_op_for_valid_active_link() {
+    fn test_use_profile_creates_active_dir_and_sets_default() {
         let (_tmp, home) = sandbox();
         let name = "test-valid";
         with_home(&home, || {
@@ -1287,13 +1369,18 @@ mod tests {
 
             ProfileManager::use_profile(name).unwrap();
 
+            // Active directory should exist
+            assert!(paths::active_dir(name).exists());
+            // Should be set as default
+            assert_eq!(ProfileManager::get_default().as_deref(), Some(name));
+            // ~/.pi/agent should NOT be touched (might be a symlink or not exist)
+            // but it must NOT point to the new active dir
             let agent = paths::agent_dir();
-            let target_before = fs::read_link(&agent).unwrap();
-
-            ProfileManager::auto_heal_symlink().unwrap();
-
-            let target_after = fs::read_link(&agent).unwrap();
-            assert_eq!(target_before, target_after);
+            if agent.is_symlink() {
+                let target = fs::read_link(&agent).unwrap();
+                // Old symlink may still point somewhere else — pim never changes it
+                assert_ne!(target, paths::active_dir(name));
+            }
         });
     }
 }

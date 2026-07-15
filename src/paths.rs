@@ -63,6 +63,11 @@ pub fn agent_dir() -> PathBuf {
         .join("agent")
 }
 
+/// Directory for per-profile config files (within data dir).
+pub fn config_dir(name: &str) -> PathBuf {
+    data_dir(name).join("config")
+}
+
 /// File that stores the default profile name.
 pub fn default_file() -> PathBuf {
     pi_manager_root().join("default")

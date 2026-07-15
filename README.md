@@ -1,24 +1,29 @@
 # pim
 
-Profile manager for [pi](https://pi.dev). Switch between
-independent sets of settings, extensions, skills, themes, and auth with a single
-command.
+Profile manager and launcher for [pi](https://pi.dev). Run independent
+profiles — each with their own extensions, skills, MCP servers, auth,
+sessions, and config files — **simultaneously** in different terminals.
 
 ## How it works
 
-Pi reads its configuration from `~/.pi/agent/`. `pim` stores lightweight profile
-manifests under `~/.pi-manager/profiles/<name>.json`. When you activate a profile,
-`pim` dynamically constructs the profile's configuration (merging settings and pool resources)
-under `~/.pi-manager/.active/<name>/` and sets `~/.pi/agent` as a **symlink** pointing to it.
+Pi supports the `PI_CODING_AGENT_DIR` environment variable (see `pi --help`),
+which overrides the default `~/.pi/agent` config directory. `pim` stores
+lightweight profile manifests under `~/.pi-manager/profiles/<name>.json`.
+When you run `pim <profile>`, it builds the profile's active view at
+`~/.pi-manager/.active/<name>/` and **exec's into `pi`** with
+`PI_CODING_AGENT_DIR` set to that directory.
 
-You never wrap pi — just activate a profile with `pim`, then run `pi`
-as usual. Pi reads `~/.pi/agent` naturally and gets the profile's config.
+This means:
+- **Multiple profiles can run at the same time** in different terminals
+- **No global state** — each pi instance has its own sessions, auth, configs
+- **Never touches `~/.pi/agent`** — your default pi config is left alone
+- **No more crashes** — switching profiles never affects running pi processes
 
 ### First-time migration
 
 If you already have a real `~/.pi/agent/` directory from using pi normally,
 the first time you run `pim use <name>`, it will automatically migrate
-your existing config into the new resource pool format and replace it with a symlink.
+your existing config into the new resource pool format.
 
 ## Installation
 
@@ -60,34 +65,47 @@ cargo install --git https://github.com/stevenhansel/pi-manager.git
 
 ## Usage
 
+`pim` is both a **profile manager** and a **pi launcher**. When you give it a
+profile name, it builds that profile's config and exec's into `pi` with
+`PI_CODING_AGENT_DIR` set — no global state, no symlink tricks.
+
+### Launch pi with a profile
+
 ```bash
-# Create a profile (empty, start fresh)
+# Launch pi with your default profile
+pim
+
+# Launch pi with a specific profile (one-shot, doesn't change default)
+pim research
+
+# Launch pi with profile and pass args through
+pim work -- -p "fix the bug"
+pim research -p "what's the weather?"
+```
+
+### Manage profiles
+
+```bash
+# Create a new empty profile
 pim create work
 
 # Create from your current ~/.pi/agent config
 pim create work --from-base
 
-# Copy from an existing profile
+# Copy selections from an existing profile
 pim create experiments --from work
 
-# Edit selections (extensions, skills, prompts) interactively
+# Edit profile selections (extensions, skills, prompts) interactively
 pim edit work
 
-# List profiles (shows active ◀ and default markers)
+# List all profiles
 pim list
 
-# Set a default profile
-pim set-default work
-
-# Activate a profile (makes ~/.pi/agent point to its active view)
+# Build/refresh active view and set as default
 pim use work
 
-# Then just run pi directly:
-pi
-pi -p "fix the bug"
-
-# Activate the default profile
-pim
+# Set a default profile (launched when running `pim` with no args)
+pim set-default work
 
 # Show current status
 pim status
@@ -95,7 +113,26 @@ pim status
 # Delete a profile
 pim delete experiments
 pim delete experiments --force   # skip confirmation
+
+# Migrate old-style profiles to the new JSON manifest format
+pim migrate
 ```
+
+### Quick reference
+
+| Command | What it does |
+|---------|-------------|
+| `pim` | Launch pi with default profile |
+| `pim research` | Launch pi with that profile |
+| `pim -p "hello"` | Launch pi with default profile + args |
+| `pim work -- -p "hi"` | Launch pi with profile + args |
+| `pim use work` | Build active view + set as default |
+| `pim edit work` | Edit profile selections interactively |
+| `pim list` | List all profiles |
+| `pim create work` | Create a new profile |
+| `pim delete work` | Delete a profile |
+| `pim status` | Show current status |
+| `pim migrate` | Migrate old-style profiles |
 
 ## What a profile looks like
 
@@ -109,25 +146,68 @@ A profile is a lightweight JSON manifest under `~/.pi-manager/profiles/<name>.js
   },
   "settings": {
     "theme": "dark"
+  },
+  "configs": {
+    "searxng.json": {
+      "baseUrl": "https://searxng.example.com"
+    }
   }
 }
 ```
 
-When activated, `pim` builds the effective active view at `~/.pi-manager/.active/<name>/`:
+When launched, `pim` builds the profile's active view at `~/.pi-manager/.active/<name>/`
+and exec's into `pi` with `PI_CODING_AGENT_DIR` set to that directory:
 
 ```
 ~/.pi-manager/.active/work/
 ├── settings.json
 ├── mcp.json
+├── config/          ── symlinks → data/work/config/   (persistent config files)
 ├── extensions/      ── symlinks → pool/extensions/
 ├── skills/          ── symlinks → pool/skills/
 ├── prompts/         ── symlinks → pool/prompts/
 ├── auth.json        ── symlink  → data/work/auth.json
-└── sessions/        ── symlink  → data/work/sessions/
+├── models.json      ── symlink  → data/work/models.json
+├── trust.json       ── symlink  → data/work/trust.json
+└── sessions/        ── symlinks → data/work/sessions/ (persistent sessions)
 ```
 
-Since each profile links to its own data directory (`~/.pi-manager/data/<name>/`), you can log into
-different accounts per profile (e.g., work GitHub vs personal GitHub).
+Key differences from the old design:
+- **`~/.pi/agent` is never touched** — your default pi config is preserved
+- **Active views are persistent** — never deleted automatically
+- **Config files** are symlinked from `data/<name>/config/`, so runtime modifications persist
+- **Session files** are symlinked from `data/<name>/sessions/`, so sessions survive rebuilds
+- **Multiple profiles** can run simultaneously in different terminals
+
+### How `PI_CODING_AGENT_DIR` works
+
+Pi reads `PI_CODING_AGENT_DIR` on startup to locate its config directory.
+pim sets this to the profile's active view before launching pi:
+
+```bash
+# What pim does internally:
+PI_CODING_AGENT_DIR=~/.pi-manager/.active/research exec pi
+```
+
+You can also use this directly if you want to run pi with a specific
+profile without pim:
+
+```bash
+PI_CODING_AGENT_DIR=~/.pi-manager/.active/research pi -p "hello"
+```
+
+### What happens to `~/.pi/agent`?
+
+`~/.pi/agent` is **never touched by pim**. If you had a pre-existing
+`~/.pi/agent` from using pi directly, it remains intact as your default
+pi config. Running `pi` directly (without pim) will continue to use it.
+
+If you have an old `~/.pi/agent` symlink from a previous version of pim,
+it's harmless and can be removed:
+
+```bash
+rm ~/.pi/agent   # optional — pim no longer uses it
+```
 
 ## Architecture
 
@@ -137,4 +217,5 @@ In short:
 
 - **`pool/`** — global source of truth for extensions, skills, and prompts
 - **`profiles/<name>.json`** — lightweight JSON manifests that select from the pool and declare configuration
-- **`data/<name>/`** — auto-generated runtime state (auth tokens, sessions)
+- **`data/<name>/`** — auto-generated runtime state (auth tokens, sessions, config files)
+- **`~/.pi/agent`** — **never touched by pim** — left as your default pi config

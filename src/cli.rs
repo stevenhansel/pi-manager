@@ -1,19 +1,28 @@
 use clap::{Parser, Subcommand};
 
-/// Profile manager for pi (AI coding agent).
+/// Launcher and profile manager for pi (AI coding agent).
 ///
-/// Manage independent profiles stored as lightweight JSON manifests in
-/// ~/.pi-manager/profiles/. Each profile selects resources (extensions,
-/// skills, prompts) from a global pool and declares per-profile settings.
+/// USAGE:
+///   pim                          Launch pi with default profile
+///   pim <profile>                Launch pi with a specific profile
+///   pim <profile> -- <args>      Launch pi with profile and pass args
+///   pim use <name>               Build active view + set as default
+///   pim edit <name>              Edit profile selections (interactive)
+///   pim list                     List profiles
+///   pim create <name>            Create a new profile
+///   pim create <name> --from <x> Create from existing profile
+///   pim delete <name>            Delete a profile
+///   pim status                   Show current status
+///   pim migrate                  Migrate old-style profiles
 ///
-/// Activate a profile with `pim use <name>` — this builds the effective
-/// ~/.pi/agent directory from the pool + manifest. Then just run `pi`
-/// as usual.
+/// Each profile has its own extensions, skills, prompts, MCP servers,
+/// auth tokens, sessions, and config files. Profiles are fully isolated.
+/// Multiple profiles can run simultaneously in different terminals.
 #[derive(Parser)]
 #[command(name = "pim", version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    pub command: Commands,
 }
 
 #[derive(Subcommand)]
@@ -38,14 +47,13 @@ pub enum Commands {
     /// Show current status (active profile, default profile)
     Status,
 
-    /// Set a default profile (activated when running `pim` with no args)
+    /// Set a default profile (launched when running `pim` with no args)
     SetDefault {
         /// Profile name
         name: String,
     },
 
-    /// Activate a profile by building its active view and pointing
-    /// ~/.pi/agent at it. After this, just run `pi` as usual.
+    /// Build/refresh a profile's active view and set it as default
     Use {
         /// Profile name
         name: String,
@@ -69,4 +77,15 @@ pub enum Commands {
 
     /// Migrate old-style profiles (directories) to the new JSON manifest format
     Migrate,
+}
+
+/// Names of reserved subcommands that can never be profile names.
+pub const RESERVED_COMMANDS: &[&str] = &[
+    "use", "edit", "list", "create", "delete", "status", "migrate",
+    "set-default", "help", "--help", "-h", "--version", "-V",
+];
+
+/// Returns true if `arg` is a reserved management command or flag.
+pub fn is_reserved(s: &str) -> bool {
+    RESERVED_COMMANDS.contains(&s)
 }

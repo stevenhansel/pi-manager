@@ -50,20 +50,36 @@ impl Sandbox {
         self.home.join(".pi").join("agent")
     }
 
-    /// Assert ~/.pi/agent is a symlink pointing to the active view of `name`.
+    /// Assert the profile's active view exists and it's set as default.
+    /// Unlike the old behavior, we never touch `~/.pi/agent`.
     fn assert_active_profile(&self, name: &str) {
-        let agent = self.agent_dir();
-        assert!(agent.is_symlink(), "~/.pi/agent should be a symlink");
-        let target = fs::read_link(&agent).unwrap();
-        let expected = self.home.join(".pi-manager").join(".active").join(name);
-        assert_eq!(
-            target,
-            expected,
-            "~/.pi/agent should point to active view of '{}'\n  got:      {}\n  expected: {}",
+        // Active view directory should exist
+        let active = self.home.join(".pi-manager").join(".active").join(name);
+        assert!(
+            active.exists(),
+            "Active view for '{}' should exist at {}",
             name,
-            target.display(),
-            expected.display()
+            active.display()
         );
+        // Default file should point to this profile
+        let default_path = self.home.join(".pi-manager").join("default");
+        assert!(default_path.exists(), "Default file should exist");
+        let content = fs::read_to_string(&default_path).unwrap();
+        assert_eq!(
+            content.trim(),
+            name,
+            "Default should be set to '{}'",
+            name
+        );
+        // ~/.pi/agent should NOT be touched by pim
+        let agent = self.agent_dir();
+        if agent.is_symlink() {
+            let target = fs::read_link(&agent).unwrap();
+            assert_ne!(
+                target, active,
+                "~/.pi/agent should NOT point to the active view"
+            );
+        }
     }
 }
 
@@ -260,12 +276,10 @@ fn test_set_default_nonexistent_fails() {
 }
 
 #[test]
-fn test_no_args_activates_default() {
+fn test_no_args_shows_status_when_no_default() {
+    // `pim` with no args and no default → shows status
     let s = Sandbox::new();
-    s.create_profile_manifest("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
-    s.pim().arg("set-default").arg("work").assert().success();
     s.pim().assert().success();
-    s.assert_active_profile("work");
 }
 
 // ─── delete ────────────────────────────────────────────────────
@@ -301,7 +315,7 @@ fn test_delete_nonexistent_fails() {
 }
 
 #[test]
-fn test_delete_force_active_profile_removes_symlink() {
+fn test_delete_force_active_profile_removes_active_view() {
     let s = Sandbox::new();
     s.create_profile_manifest("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
     s.pim().arg("use").arg("work").assert().success();
@@ -313,7 +327,16 @@ fn test_delete_force_active_profile_removes_symlink() {
         .arg("--force")
         .assert()
         .success();
-    assert!(!s.agent_dir().exists(), "symlink should be removed");
+    // Active view should be removed
+    assert!(
+        !s.home()
+            .join(".pi-manager")
+            .join(".active")
+            .join("work")
+            .exists(),
+        "active view should be removed"
+    );
+    // ~/.pi/agent should NOT be touched (might not exist, might be old symlink)
 }
 
 #[test]
@@ -454,7 +477,7 @@ fn test_create_then_list_then_use_then_delete_workflow() {
 }
 
 #[test]
-fn test_migrate_active_profile_updates_symlink() {
+fn test_migrate_creates_manifest_and_active_view() {
     let s = Sandbox::new();
 
     // Create an old-style profile directory
@@ -462,17 +485,24 @@ fn test_migrate_active_profile_updates_symlink() {
     fs::create_dir_all(old_dir.join("extensions")).unwrap();
     fs::write(old_dir.join("extensions").join("rtk.ts"), "// ext").unwrap();
 
-    // Point the symlink ~/.pi/agent to the old-style profile directory
-    let agent = s.agent_dir();
-    fs::create_dir_all(agent.parent().unwrap()).unwrap();
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&old_dir, &agent).unwrap();
-    #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(&old_dir, &agent).unwrap();
-
     // Run migrate
     s.pim().arg("migrate").assert().success();
 
-    // Verify it is now migrated AND the symlink is updated to the active view
-    s.assert_active_profile("legacy");
+    // Manifest should exist
+    let manifest = s
+        .home()
+        .join(".pi-manager")
+        .join("profiles")
+        .join("legacy.json");
+    assert!(manifest.exists(), "manifest should exist after migration");
+
+    // Old directory should be gone
+    assert!(
+        !s.home()
+            .join(".pi-manager")
+            .join("profiles")
+            .join("legacy")
+            .exists(),
+        "old profile directory should be removed"
+    );
 }
