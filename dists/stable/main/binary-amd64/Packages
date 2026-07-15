@@ -176,13 +176,13 @@ Package: pi-manager
 Version: 0.0.2-1
 Architecture: amd64
 Maintainer: Steven Hansel <steven.hansel@tu-dortmund.de>
-Installed-Size: 994
+Installed-Size: 995
 Depends: libc6 (>= 2.34)
 Filename: pool/main/pi-manager_0.0.2-1_amd64.deb
-Size: 391272
-MD5sum: fb330d063d65595096347480fda87051
-SHA1: a19799d2ec77a9cbe0031d447f66d9d435ef4ca4
-SHA256: d812941fbdb8bb58aa74692788110bd0661eb220b0b1421d5129d2a5ea17e920
+Size: 391724
+MD5sum: 73de15052a126c5c6964cbd230b327af
+SHA1: d495e02ac5ddbe1f38073ef2f44f7f2c1350e7d7
+SHA256: 046136a87363c6be165384ee37e89cf5156939997b17d72edf22df18d009898a
 Priority: optional
 Homepage: https://github.com/stevenhansel/pi-manager
 Description: Profile manager for pi (AI coding agent). Switch between independent config
@@ -396,6 +396,30 @@ Description: Profile manager for pi (AI coding agent). Switch between independen
  `~/.pi/agent` is **never touched by pim**. If you had a pre-existing
  `~/.pi/agent` from using pi directly, it remains intact as your default
  pi config. Running `pi` directly (without pim) will continue to use it.
+ .
+ ## Development
+ .
+ ### Pre-commit hooks
+ .
+ This repo ships with git hooks in `.githooks/` that run the same lint checks as
+ CI
+ (`cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D
+ warnings`)
+ before every commit. Enable them with:
+ .
+ ```bash
+ git config core.hooksPath .githooks
+ ```
+ .
+ Now `git commit` will block if formatting or clippy issues are detected.
+ .
+ ### Release workflow
+ .
+ Pushing a tag matching `v*` triggers the [release
+ workflow](.github/workflows/release.yml)
+ which builds binaries for Linux, macOS, and Windows, publishes a GitHub
+ Release,
+ and updates the APT repository on the `gh-pages` branch.
  .
  ## Architecture
  .

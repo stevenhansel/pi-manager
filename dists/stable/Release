@@ -5,5 +5,5 @@ Architectures: amd64
 Components: main
 Description: APT Repository for pi-manager
 SHA256:
- 04242e95818506dfc3eb822d8568d04ecfb54b35a63a9e0121492364e8882767 12911 main/binary-amd64/Packages
- 1c2714032fadbee3251d875bf0f4c7aba7bbbd15500d097e383d90b582a11009 3807 main/binary-amd64/Packages.gz
+ 3ff1ec3f4b1d39c333fc7e52b9301910b3e00f90514eca3ce01ba9616992c082 13563 main/binary-amd64/Packages
+ 785430f5727f00a72274592f51525abeb2498b679550a6c519585ad53c763016 4101 main/binary-amd64/Packages.gz
