@@ -676,8 +676,12 @@ impl ProfileManager {
     /// simultaneously from different terminals, each with their own profile.
     pub fn launch_pi(profile: &str, pi_args: &[String]) -> Result<()> {
         let profile_dir = paths::profile_dir(profile);
-        if !profile_dir.join("manifest.json").exists() {
+        // Always rebuild symlinks/extensions/skills from manifest before launching,
+        // so that edits are reflected even when the profile is not the active default.
+        if profile_dir.join("manifest.json").exists() {
             Self::set_default(profile)?;
+        } else {
+            bail!("Profile '{profile}' does not exist — create it with 'pim create {profile}'");
         }
 
         #[cfg(unix)]
