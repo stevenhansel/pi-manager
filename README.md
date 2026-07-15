@@ -8,9 +8,9 @@ sessions, and config files — **simultaneously** in different terminals.
 
 Pi supports the `PI_CODING_AGENT_DIR` environment variable (see `pi --help`),
 which overrides the default `~/.pi/agent` config directory. `pim` stores
-profiles as directories under `~/.pi-manager/profiles/<name>/`. Inside each profile directory, there is a `manifest.json` file.
+profiles as directories under `~/.pim/profiles/<name>/`. Inside each profile directory, there is a `manifest.json` file.
 When you run `pim <profile>`, it builds/refreshes the profile's directory and **exec's into `pi`** with
-`PI_CODING_AGENT_DIR` set directly to `~/.pi-manager/profiles/<name>/`.
+`PI_CODING_AGENT_DIR` set directly to `~/.pim/profiles/<name>/`.
 
 This means:
 - **Multiple profiles can run at the same time** in different terminals
@@ -129,7 +129,7 @@ pim delete experiments --force   # skip confirmation
 
 ## What a profile looks like
 
-A profile is a directory under `~/.pi-manager/profiles/<name>/` containing a `manifest.json` file:
+A profile is a directory under `~/.pim/profiles/<name>/` containing a `manifest.json` file:
 
 ```json
 {
@@ -151,7 +151,7 @@ A profile is a directory under `~/.pi-manager/profiles/<name>/` containing a `ma
 When built or used, the profile directory itself becomes the pi coding agent folder:
 
 ```
-~/.pi-manager/profiles/work/
+~/.pim/profiles/work/
 ├── manifest.json     ── configuration manifest
 ├── settings.json     ── generated from manifest
 ├── mcp.json          ── generated from manifest
@@ -177,14 +177,14 @@ pim sets this to the profile's directory before launching pi:
 
 ```bash
 # What pim does internally:
-PI_CODING_AGENT_DIR=~/.pi-manager/profiles/research exec pi
+PI_CODING_AGENT_DIR=~/.pim/profiles/research exec pi
 ```
 
 You can also use this directly if you want to run pi with a specific
 profile without pim:
 
 ```bash
-PI_CODING_AGENT_DIR=~/.pi-manager/profiles/research pi -p "hello"
+PI_CODING_AGENT_DIR=~/.pim/profiles/research pi -p "hello"
 ```
 
 ### What happens to `~/.pi/agent`?

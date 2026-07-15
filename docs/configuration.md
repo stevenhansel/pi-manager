@@ -5,7 +5,7 @@ A design pattern where reusable resources live in a global **pool** and each pro
 ## Core concepts
 
 ```
-~/.pi-manager/
+~/.pim/
 ├── pool/                ← SOURCE OF TRUTH: the actual files
 │   ├── extensions/
 │   ├── skills/
@@ -114,18 +114,18 @@ This means:
 
 ```bash
 # What pim does internally:
-PI_CODING_AGENT_DIR=~/.pi-manager/profiles/research exec pi
+PI_CODING_AGENT_DIR=~/.pim/profiles/research exec pi
 
 # You can also use this directly:
-PI_CODING_AGENT_DIR=~/.pi-manager/profiles/research pi -p "hello"
+PI_CODING_AGENT_DIR=~/.pim/profiles/research pi -p "hello"
 ```
 
 ## Activation / Set-Default Flow
 
-When `pim set-default <name>` runs (or `pim <name>` runs for a profile that has not been initialized yet), it builds/refreshes the profile directory at `~/.pi-manager/profiles/<name>/` and (for `pim <name>`) exec's into `pi` with `PI_CODING_AGENT_DIR` set to that directory:
+When `pim set-default <name>` runs (or `pim <name>` runs for a profile that has not been initialized yet), it builds/refreshes the profile directory at `~/.pim/profiles/<name>/` and (for `pim <name>`) exec's into `pi` with `PI_CODING_AGENT_DIR` set to that directory:
 
 ```
-~/.pi-manager/profiles/<name>/        ← NOT symlinked from ~/.pi/agent
+~/.pim/profiles/<name>/        ← NOT symlinked from ~/.pi/agent
 ├── manifest.json                     ← selection manifest
 ├── settings.json                     ← from profile manifest
 ├── mcp.json                          ← from profile manifest

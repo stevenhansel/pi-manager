@@ -4,7 +4,7 @@ use std::path::PathBuf;
 pub fn pi_manager_root() -> PathBuf {
     dirs::home_dir()
         .expect("Could not find home directory")
-        .join(".pi-manager")
+        .join(".pim")
 }
 
 /// Root directory for all profile directories.

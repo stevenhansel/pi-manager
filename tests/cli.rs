@@ -19,10 +19,10 @@ impl Sandbox {
             .canonicalize()
             .unwrap_or_else(|_| tmp.path().to_path_buf());
         // Create basic structure
-        fs::create_dir_all(home.join(".pi-manager").join("profiles")).unwrap();
-        fs::create_dir_all(home.join(".pi-manager").join("pool").join("extensions")).unwrap();
-        fs::create_dir_all(home.join(".pi-manager").join("pool").join("skills")).unwrap();
-        fs::create_dir_all(home.join(".pi-manager").join("pool").join("prompts")).unwrap();
+        fs::create_dir_all(home.join(".pim").join("profiles")).unwrap();
+        fs::create_dir_all(home.join(".pim").join("pool").join("extensions")).unwrap();
+        fs::create_dir_all(home.join(".pim").join("pool").join("skills")).unwrap();
+        fs::create_dir_all(home.join(".pim").join("pool").join("prompts")).unwrap();
         Self { _tmp: tmp, home }
     }
 
@@ -38,7 +38,7 @@ impl Sandbox {
 
     /// Create a profile in the new directory-based format.
     fn create_profile(&self, name: &str, json: &str) {
-        let dir = self.home.join(".pi-manager").join("profiles").join(name);
+        let dir = self.home.join(".pim").join("profiles").join(name);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("manifest.json"), json).unwrap();
     }
@@ -50,7 +50,7 @@ impl Sandbox {
     /// Assert the profile directory exists and is set as default.
     fn assert_active_profile(&self, name: &str) {
         // Profile directory should exist
-        let profile_dir = self.home.join(".pi-manager").join("profiles").join(name);
+        let profile_dir = self.home.join(".pim").join("profiles").join(name);
         assert!(
             profile_dir.exists(),
             "Profile '{}' should exist at {}",
@@ -62,7 +62,7 @@ impl Sandbox {
             "Profile '{name}' should have manifest.json"
         );
         // pim.json should have this profile as default
-        let pim_config = self.home.join(".pi-manager").join("pim.json");
+        let pim_config = self.home.join(".pim").join("pim.json");
         assert!(pim_config.exists(), "pim.json should exist");
         let content: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&pim_config).unwrap()).unwrap();
@@ -91,7 +91,7 @@ fn test_create_empty_profile() {
 
     let manifest = s
         .home()
-        .join(".pi-manager")
+        .join(".pim")
         .join("profiles")
         .join("work")
         .join("manifest.json");
@@ -123,7 +123,7 @@ fn test_create_from_another_profile() {
 
     let manifest_path = s
         .home()
-        .join(".pi-manager")
+        .join(".pim")
         .join("profiles")
         .join("work")
         .join("manifest.json");
@@ -207,7 +207,7 @@ fn test_set_default_with_selections() {
     // Add an extension to the pool
     fs::write(
         s.home()
-            .join(".pi-manager")
+            .join(".pim")
             .join("pool")
             .join("extensions")
             .join("rtk.ts"),
@@ -225,7 +225,7 @@ fn test_set_default_with_selections() {
     // Check the extension was symlinked into the profile directory
     let ext = s
         .home()
-        .join(".pi-manager")
+        .join(".pim")
         .join("profiles")
         .join("work")
         .join("extensions")
@@ -258,7 +258,7 @@ fn test_set_default_creates_default_file() {
     s.create_profile("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
     s.pim().arg("set-default").arg("work").assert().success();
 
-    let pim_config = s.home().join(".pi-manager").join("pim.json");
+    let pim_config = s.home().join(".pim").join("pim.json");
     assert!(pim_config.exists());
     let content: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&pim_config).unwrap()).unwrap();
@@ -295,7 +295,7 @@ fn test_delete_force_removes_profile() {
         .assert()
         .success();
 
-    let profile_dir = s.home().join(".pi-manager").join("profiles").join("work");
+    let profile_dir = s.home().join(".pim").join("profiles").join("work");
     assert!(!profile_dir.exists(), "profile directory should be deleted");
 }
 
@@ -326,7 +326,7 @@ fn test_delete_force_active_profile_removes_profile_dir() {
 
     assert!(
         !s.home()
-            .join(".pi-manager")
+            .join(".pim")
             .join("profiles")
             .join("work")
             .exists(),
@@ -346,7 +346,7 @@ fn test_delete_force_default_profile_clears_default() {
         .assert()
         .success();
 
-    let pim_config = s.home().join(".pi-manager").join("pim.json");
+    let pim_config = s.home().join(".pim").join("pim.json");
     assert!(pim_config.exists(), "pim.json should still exist");
     let content: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&pim_config).unwrap()).unwrap();
@@ -391,7 +391,7 @@ fn test_create_then_list_then_use_then_delete_workflow() {
         .success();
     assert!(
         !s.home()
-            .join(".pi-manager")
+            .join(".pim")
             .join("profiles")
             .join("work")
             .exists()

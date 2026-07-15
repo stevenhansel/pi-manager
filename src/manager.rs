@@ -12,7 +12,7 @@ use std::os::unix::process::CommandExt;
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const CONFIG_TEMPLATE_FILE: &str = "config.default.json";
 
-/// Global pim configuration stored at `~/.pi-manager/pim.json`.
+/// Global pim configuration stored at `~/.pim/pim.json`.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PimConfig {
@@ -213,16 +213,11 @@ impl ProfileManager {
         config.default_profile = Some(name.to_string());
         Self::write_config(&config)?;
 
-        let ext_count = manifest.select.extensions.len();
-        let skill_count = manifest.select.skills.len();
-        let prompt_count = manifest.select.prompts.len();
-        println!(
-            "✅ Default profile set to '{name}' — {ext_count} extensions, {skill_count} skills, {prompt_count} prompts"
-        );
+
         Ok(())
     }
 
-    /// Activate the default profile.
+    /// Activate the default profile (invoked via bare `pim` with no arguments).
     #[allow(dead_code)]
     pub fn use_default() -> Result<()> {
         if let Some(name) = Self::get_default() {
@@ -772,7 +767,7 @@ mod tests {
     }
 
     fn create_manifest_json(home: &Path, name: &str, json: &str) {
-        let dir = home.join(".pi-manager").join("profiles").join(name);
+        let dir = home.join(".pim").join("profiles").join(name);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("manifest.json"), json).unwrap();
     }
@@ -1001,7 +996,7 @@ mod tests {
         });
 
         let mpath = home
-            .join(".pi-manager")
+            .join(".pim")
             .join("profiles")
             .join("empty")
             .join("manifest.json");
@@ -1023,7 +1018,7 @@ mod tests {
         let (_tmp, home) = sandbox();
         let name = "test-valid";
         with_home(&home, || {
-            let profile_dir = home.join(".pi-manager").join("profiles").join(name);
+            let profile_dir = home.join(".pim").join("profiles").join(name);
             fs::create_dir_all(&profile_dir).unwrap();
             fs::write(
                 profile_dir.join("manifest.json"),
