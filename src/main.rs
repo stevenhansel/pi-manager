@@ -18,15 +18,12 @@ fn run() -> anyhow::Result<()> {
     let raw: Vec<String> = std::env::args().collect();
     let args: Vec<&str> = raw.iter().map(String::as_str).collect();
 
-    match args.len() {
-        // `pim` (no args) → launch pi with default or show status
-        1 => {
-            if let Some(default) = ProfileManager::get_default() {
-                return ProfileManager::launch_pi(&default, &[]);
-            }
-            return ProfileManager::status();
+    // `pim` (no args) → launch pi with default or show status
+    if args.len() == 1 {
+        if let Some(default) = ProfileManager::get_default() {
+            return ProfileManager::launch_pi(&default, &[]);
         }
-        _ => {}
+        return ProfileManager::status();
     }
 
     let first = args[1];
@@ -45,7 +42,7 @@ fn run() -> anyhow::Result<()> {
         // Everything else passes through to pi if default exists
         if let Some(default) = ProfileManager::get_default() {
             let pi_start = if first == "--" { 2 } else { 1 };
-            let pi_args: Vec<String> = args[pi_start..].iter().map(|s| s.to_string()).collect();
+            let pi_args: Vec<String> = args[pi_start..].iter().map(ToString::to_string).collect();
             return ProfileManager::launch_pi(&default, &pi_args);
         }
     } else if cli::is_reserved(first) {
@@ -65,10 +62,10 @@ fn run() -> anyhow::Result<()> {
         };
     } else {
         // `pim <profile> [-- <pi-args>]` or `pim unknown-cmd`
-        let profiles = ProfileManager::list_profile_names()?;
+        let profiles = ProfileManager::list_profile_names();
         if profiles.iter().any(|p| p.as_str() == first) {
             let pi_start = if args.len() > 2 && args[2] == "--" { 3 } else { 2 };
-            let pi_args: Vec<String> = args[pi_start..].iter().map(|s| s.to_string()).collect();
+            let pi_args: Vec<String> = args[pi_start..].iter().map(ToString::to_string).collect();
             return ProfileManager::launch_pi(first, &pi_args);
         }
     }

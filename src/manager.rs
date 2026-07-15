@@ -859,8 +859,7 @@ impl ProfileManager {
 
     /// No-op: symlink healing is no longer needed since we never touch `~/.pi/agent`.
     #[allow(dead_code)]
-    pub fn auto_heal_symlink() -> Result<()> {
-        Ok(())
+    pub fn auto_heal_symlink() {
     }
 
     /// Count selected items in a profile manifest.
@@ -914,11 +913,11 @@ impl ProfileManager {
     }
 
     /// Return a sorted list of all profile names.
-    pub fn list_profile_names() -> Result<Vec<String>> {
+    pub fn list_profile_names() -> Vec<String> {
         let mut profiles = Vec::new();
         let root = paths::profiles_root();
         if !root.exists() {
-            return Ok(profiles);
+            return profiles;
         }
         if let Ok(entries) = fs::read_dir(&root) {
             for entry in entries.flatten() {
@@ -934,7 +933,7 @@ impl ProfileManager {
             }
         }
         profiles.sort();
-        Ok(profiles)
+        profiles
     }
 
     /// Sync runtime state (sessions, configs) from the old active view to the data directory.
@@ -975,10 +974,9 @@ impl ProfileManager {
                     let filename = entry.file_name();
                     let src = entry.path();
                     let dst = data_sessions.join(&filename);
-                    if !dst.exists() {
-                        if ft.is_file() && !ft.is_symlink() {
-                            fs::copy(&src, &dst)?;
-                        }
+                    if !dst.exists() && ft.is_file() && !ft.is_symlink() {
+                        fs::copy(&src, &dst)?;
+                    
                         // Skip if it's already a symlink (already backed up)
                     }
                 }
@@ -1350,8 +1348,7 @@ mod tests {
         // auto_heal_symlink is a no-op since we never touch ~/.pi/agent
         let (_tmp, home) = sandbox();
         with_home(&home, || {
-            let result = ProfileManager::auto_heal_symlink();
-            assert!(result.is_ok(), "auto_heal failed: {:?}", result.err());
+            ProfileManager::auto_heal_symlink();
         });
     }
 
