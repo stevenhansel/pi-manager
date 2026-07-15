@@ -46,17 +46,18 @@ fn run() -> anyhow::Result<()> {
             return ProfileManager::launch_pi(&default, &pi_args);
         }
     } else if cli::is_reserved(first) {
-        // `pim list`, `pim use <name>`, etc. → clap management commands
+        // `pim list`, `pim set-default <name>`, etc. → clap management commands
         let cli = Cli::parse_from(raw);
         return match cli.command {
-            Commands::Create { name, from, from_base } => {
-                ProfileManager::create(&name, from_base, from.as_deref())
-            }
+            Commands::Create {
+                name,
+                from,
+                from_base,
+            } => ProfileManager::create(&name, from_base, from.as_deref()),
             Commands::Migrate => ProfileManager::migrate(),
             Commands::List => ProfileManager::list(),
             Commands::Status => ProfileManager::status(),
             Commands::SetDefault { name } => ProfileManager::set_default(&name),
-            Commands::Use { name } => ProfileManager::use_profile(&name),
             Commands::Delete { name, force } => ProfileManager::delete(&name, force),
             Commands::Edit { name } => ProfileManager::edit(&name),
         };
@@ -64,7 +65,11 @@ fn run() -> anyhow::Result<()> {
         // `pim <profile> [-- <pi-args>]` or `pim unknown-cmd`
         let profiles = ProfileManager::list_profile_names();
         if profiles.iter().any(|p| p.as_str() == first) {
-            let pi_start = if args.len() > 2 && args[2] == "--" { 3 } else { 2 };
+            let pi_start = if args.len() > 2 && args[2] == "--" {
+                3
+            } else {
+                2
+            };
             let pi_args: Vec<String> = args[pi_start..].iter().map(ToString::to_string).collect();
             return ProfileManager::launch_pi(first, &pi_args);
         }
@@ -73,14 +78,15 @@ fn run() -> anyhow::Result<()> {
     // Fallback: let clap try to parse (will show error for unknown commands)
     let cli = Cli::parse_from(raw);
     match cli.command {
-        Commands::Create { name, from, from_base } => {
-            ProfileManager::create(&name, from_base, from.as_deref())
-        }
+        Commands::Create {
+            name,
+            from,
+            from_base,
+        } => ProfileManager::create(&name, from_base, from.as_deref()),
         Commands::Migrate => ProfileManager::migrate(),
         Commands::List => ProfileManager::list(),
         Commands::Status => ProfileManager::status(),
         Commands::SetDefault { name } => ProfileManager::set_default(&name),
-        Commands::Use { name } => ProfileManager::use_profile(&name),
         Commands::Delete { name, force } => ProfileManager::delete(&name, force),
         Commands::Edit { name } => ProfileManager::edit(&name),
     }

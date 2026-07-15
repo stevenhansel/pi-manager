@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 ///   pim                          Launch pi with default profile
 ///   pim <profile>                Launch pi with a specific profile
 ///   pim <profile> -- <args>      Launch pi with profile and pass args
-///   pim use <name>               Build active view + set as default
+///   pim set-default <name>       Build/refresh profile + set as default
 ///   pim edit <name>              Edit profile selections (interactive)
 ///   pim list                     List profiles
 ///   pim create <name>            Create a new profile
@@ -53,12 +53,6 @@ pub enum Commands {
         name: String,
     },
 
-    /// Build/refresh a profile's active view and set it as default
-    Use {
-        /// Profile name
-        name: String,
-    },
-
     /// Delete a profile and its data
     Delete {
         /// Profile name
@@ -81,8 +75,18 @@ pub enum Commands {
 
 /// Names of reserved subcommands that can never be profile names.
 pub const RESERVED_COMMANDS: &[&str] = &[
-    "use", "edit", "list", "create", "delete", "status", "migrate",
-    "set-default", "help", "--help", "-h", "--version", "-V",
+    "edit",
+    "list",
+    "create",
+    "delete",
+    "status",
+    "migrate",
+    "set-default",
+    "help",
+    "--help",
+    "-h",
+    "--version",
+    "-V",
 ];
 
 /// Returns true if `arg` is a reserved management command or flag.

@@ -36,38 +36,39 @@ impl Sandbox {
         &self.home
     }
 
-    /// Create a profile manifest at the given path with the given JSON content.
-    fn create_profile_manifest(&self, name: &str, json: &str) {
-        let path = self
-            .home
-            .join(".pi-manager")
-            .join("profiles")
-            .join(format!("{name}.json"));
-        fs::write(&path, json).unwrap();
+    /// Create a profile in the new directory-based format.
+    fn create_profile(&self, name: &str, json: &str) {
+        let dir = self.home.join(".pi-manager").join("profiles").join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("manifest.json"), json).unwrap();
     }
 
     fn agent_dir(&self) -> PathBuf {
         self.home.join(".pi").join("agent")
     }
 
-    /// Assert the profile's active view exists and it's set as default.
-    /// Unlike the old behavior, we never touch `~/.pi/agent`.
+    /// Assert the profile directory exists and is set as default.
     fn assert_active_profile(&self, name: &str) {
-        // Active view directory should exist
-        let active = self.home.join(".pi-manager").join(".active").join(name);
+        // Profile directory should exist
+        let profile_dir = self.home.join(".pi-manager").join("profiles").join(name);
         assert!(
-            active.exists(),
-            "Active view for '{}' should exist at {}",
+            profile_dir.exists(),
+            "Profile '{}' should exist at {}",
             name,
-            active.display()
+            profile_dir.display()
         );
-        // Default file should point to this profile
-        let default_path = self.home.join(".pi-manager").join("default");
-        assert!(default_path.exists(), "Default file should exist");
-        let content = fs::read_to_string(&default_path).unwrap();
+        assert!(
+            profile_dir.join("manifest.json").exists(),
+            "Profile '{}' should have manifest.json",
+            name
+        );
+        // pim.json should have this profile as default
+        let pim_config = self.home.join(".pi-manager").join("pim.json");
+        assert!(pim_config.exists(), "pim.json should exist");
+        let content: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&pim_config).unwrap()).unwrap();
         assert_eq!(
-            content.trim(),
-            name,
+            content["defaultProfile"], name,
             "Default should be set to '{}'",
             name
         );
@@ -76,8 +77,8 @@ impl Sandbox {
         if agent.is_symlink() {
             let target = fs::read_link(&agent).unwrap();
             assert_ne!(
-                target, active,
-                "~/.pi/agent should NOT point to the active view"
+                target, profile_dir,
+                "~/.pi/agent should NOT point to the profile directory"
             );
         }
     }
@@ -94,7 +95,8 @@ fn test_create_empty_profile() {
         .home()
         .join(".pi-manager")
         .join("profiles")
-        .join("work.json");
+        .join("work")
+        .join("manifest.json");
     assert!(
         manifest.exists(),
         "Profile 'work' should exist at {}",
@@ -112,7 +114,7 @@ fn test_create_duplicate_fails() {
 #[test]
 fn test_create_from_another_profile() {
     let s = Sandbox::new();
-    s.create_profile_manifest("base", r#"{"select":{"extensions":["rtk"]}}"#);
+    s.create_profile("base", r#"{"select":{"extensions":["rtk"]}}"#);
     s.pim()
         .arg("create")
         .arg("work")
@@ -125,7 +127,8 @@ fn test_create_from_another_profile() {
         .home()
         .join(".pi-manager")
         .join("profiles")
-        .join("work.json");
+        .join("work")
+        .join("manifest.json");
     let content = fs::read_to_string(&manifest_path).unwrap();
     assert!(
         content.contains("rtk"),
@@ -176,34 +179,32 @@ fn test_list_with_profiles() {
 // ─── use ───────────────────────────────────────────────────────
 
 #[test]
-fn test_use_profile_creates_symlink() {
+fn test_set_default_creates_profile_dir() {
     let s = Sandbox::new();
-    s.create_profile_manifest("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
-    s.pim().arg("use").arg("work").assert().success();
+    s.create_profile("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
+    s.pim().arg("set-default").arg("work").assert().success();
     s.assert_active_profile("work");
 }
 
 #[test]
-fn test_use_switches_between_profiles() {
+fn test_set_default_switches_between_profiles() {
     let s = Sandbox::new();
-    s.create_profile_manifest("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
-    s.create_profile_manifest("personal", r#"{"select":{"extensions":[],"skills":[]}}"#);
+    s.create_profile("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
+    s.create_profile("personal", r#"{"select":{"extensions":[],"skills":[]}}"#);
 
-    s.pim().arg("use").arg("work").assert().success();
+    s.pim().arg("set-default").arg("work").assert().success();
     s.assert_active_profile("work");
 
-    s.pim().arg("use").arg("personal").assert().success();
+    s.pim()
+        .arg("set-default")
+        .arg("personal")
+        .assert()
+        .success();
     s.assert_active_profile("personal");
 }
 
 #[test]
-fn test_use_nonexistent_fails() {
-    let s = Sandbox::new();
-    s.pim().arg("use").arg("nonexistent").assert().failure();
-}
-
-#[test]
-fn test_use_with_selections() {
+fn test_set_default_with_selections() {
     let s = Sandbox::new();
     // Add an extension to the pool
     fs::write(
@@ -216,23 +217,23 @@ fn test_use_with_selections() {
     )
     .unwrap();
 
-    s.create_profile_manifest(
+    s.create_profile(
         "work",
         r#"{"select":{"extensions":["rtk.ts"],"skills":[]}}"#,
     );
-    s.pim().arg("use").arg("work").assert().success();
+    s.pim().arg("set-default").arg("work").assert().success();
     s.assert_active_profile("work");
 
-    // Check the extension was symlinked into the active view
-    let active_ext = s
+    // Check the extension was symlinked into the profile directory
+    let ext = s
         .home()
         .join(".pi-manager")
-        .join(".active")
+        .join("profiles")
         .join("work")
         .join("extensions")
         .join("rtk.ts");
-    assert!(active_ext.exists(), "extension should exist in active view");
-    assert!(active_ext.is_symlink(), "extension should be a symlink");
+    assert!(ext.exists(), "extension should exist in profile directory");
+    assert!(ext.is_symlink(), "extension should be a symlink");
 }
 
 // ─── status ────────────────────────────────────────────────────
@@ -246,8 +247,8 @@ fn test_status_no_profiles() {
 #[test]
 fn test_status_with_managed_agent() {
     let s = Sandbox::new();
-    s.create_profile_manifest("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
-    s.pim().arg("use").arg("work").assert().success();
+    s.create_profile("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
+    s.pim().arg("set-default").arg("work").assert().success();
     s.pim().arg("status").assert().success();
 }
 
@@ -256,13 +257,14 @@ fn test_status_with_managed_agent() {
 #[test]
 fn test_set_default_creates_default_file() {
     let s = Sandbox::new();
-    s.create_profile_manifest("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
+    s.create_profile("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
     s.pim().arg("set-default").arg("work").assert().success();
 
-    let default_path = s.home().join(".pi-manager").join("default");
-    assert!(default_path.exists());
-    let content = fs::read_to_string(&default_path).unwrap();
-    assert_eq!(content.trim(), "work");
+    let pim_config = s.home().join(".pi-manager").join("pim.json");
+    assert!(pim_config.exists());
+    let content: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&pim_config).unwrap()).unwrap();
+    assert_eq!(content["defaultProfile"], "work");
 }
 
 #[test]
@@ -295,12 +297,8 @@ fn test_delete_force_removes_profile() {
         .assert()
         .success();
 
-    let manifest = s
-        .home()
-        .join(".pi-manager")
-        .join("profiles")
-        .join("work.json");
-    assert!(!manifest.exists(), "manifest should be deleted");
+    let profile_dir = s.home().join(".pi-manager").join("profiles").join("work");
+    assert!(!profile_dir.exists(), "profile directory should be deleted");
 }
 
 #[test]
@@ -315,10 +313,10 @@ fn test_delete_nonexistent_fails() {
 }
 
 #[test]
-fn test_delete_force_active_profile_removes_active_view() {
+fn test_delete_force_active_profile_removes_profile_dir() {
     let s = Sandbox::new();
-    s.create_profile_manifest("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
-    s.pim().arg("use").arg("work").assert().success();
+    s.create_profile("work", r#"{"select":{"extensions":[],"skills":[]}}"#);
+    s.pim().arg("set-default").arg("work").assert().success();
     s.assert_active_profile("work");
 
     s.pim()
@@ -327,16 +325,15 @@ fn test_delete_force_active_profile_removes_active_view() {
         .arg("--force")
         .assert()
         .success();
-    // Active view should be removed
+
     assert!(
         !s.home()
             .join(".pi-manager")
-            .join(".active")
+            .join("profiles")
             .join("work")
             .exists(),
-        "active view should be removed"
+        "profile directory should be removed"
     );
-    // ~/.pi/agent should NOT be touched (might not exist, might be old symlink)
 }
 
 #[test]
@@ -351,89 +348,82 @@ fn test_delete_force_default_profile_clears_default() {
         .assert()
         .success();
 
-    let default_path = s.home().join(".pi-manager").join("default");
-    assert!(!default_path.exists(), "default file should be removed");
+    let pim_config = s.home().join(".pi-manager").join("pim.json");
+    assert!(pim_config.exists(), "pim.json should still exist");
+    let content: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&pim_config).unwrap()).unwrap();
+    assert!(
+        content.get("defaultProfile").is_none()
+            || content["defaultProfile"].is_null()
+            || content["defaultProfile"] == "",
+        "defaultProfile should be cleared, got: {:?}",
+        content["defaultProfile"]
+    );
 }
 
 // ─── migration ─────────────────────────────────────────────────
 
 #[test]
-fn test_migrate_converts_old_profile() {
+fn test_migrate_converts_old_format() {
     let s = Sandbox::new();
 
-    // Create an old-style profile directory
-    let old_dir = s.home().join(".pi-manager").join("profiles").join("legacy");
-    fs::create_dir_all(old_dir.join("extensions")).unwrap();
-    fs::write(old_dir.join("extensions").join("rtk.ts"), "// ext").unwrap();
-    fs::write(old_dir.join("settings.json"), r#"{"theme":"dark"}"#).unwrap();
-    fs::write(old_dir.join("auth.json"), r#"{"key":"secret"}"#).unwrap();
-
-    s.pim().arg("migrate").assert().success();
-
-    // Check manifest was created
-    let manifest = s
-        .home()
-        .join(".pi-manager")
-        .join("profiles")
-        .join("legacy.json");
-    assert!(manifest.exists(), "manifest should exist after migration");
-
-    // Check pool has the extension
-    assert!(
+    // Create an old-style standalone manifest
+    fs::write(
         s.home()
             .join(".pi-manager")
-            .join("pool")
-            .join("extensions")
-            .join("rtk.ts")
-            .exists(),
-        "extension should be in pool"
-    );
-
-    // Check data has auth
-    assert!(
+            .join("profiles")
+            .join("legacy.json"),
+        r#"{"select":{"extensions":["rtk.ts"],"skills":[]}}"#,
+    )
+    .unwrap();
+    // Create old data dir
+    fs::create_dir_all(
         s.home()
             .join(".pi-manager")
             .join("data")
             .join("legacy")
-            .join("auth.json")
-            .exists(),
-        "auth should be in data dir"
+            .join("config"),
+    )
+    .unwrap();
+    fs::write(
+        s.home()
+            .join(".pi-manager")
+            .join("data")
+            .join("legacy")
+            .join("auth.json"),
+        r#"{"key":"secret"}"#,
+    )
+    .unwrap();
+
+    s.pim().arg("migrate").assert().success();
+
+    // Check new format
+    let profile_dir = s.home().join(".pi-manager").join("profiles").join("legacy");
+    assert!(
+        profile_dir.join("manifest.json").exists(),
+        "manifest.json should exist after migration"
+    );
+    assert!(
+        profile_dir.join("auth.json").exists(),
+        "auth.json should be merged"
     );
 
-    // Check old directory is gone
+    // Old files should be gone
     assert!(
         !s.home()
             .join(".pi-manager")
             .join("profiles")
-            .join("legacy")
+            .join("legacy.json")
             .exists(),
-        "old profile directory should be removed"
+        "old standalone manifest should be removed"
     );
-}
-
-#[test]
-fn test_use_migrates_real_directory() {
-    let s = Sandbox::new();
-
-    // Create old-style profile
-    let old_dir = s.home().join(".pi-manager").join("profiles").join("legacy");
-    fs::create_dir_all(old_dir.join("extensions")).unwrap();
-    fs::write(old_dir.join("extensions").join("rtk.ts"), "// ext").unwrap();
-
-    // Use it — should migrate on-the-fly
-    s.pim().arg("use").arg("legacy").assert().success();
-
-    // Should now be an active view symlink
-    s.assert_active_profile("legacy");
-
-    // Old directory should be gone
     assert!(
         !s.home()
             .join(".pi-manager")
-            .join("profiles")
+            .join("data")
             .join("legacy")
             .exists(),
-        "old profile directory should be removed after use"
+        "old data dir should be removed"
     );
 }
 
@@ -457,7 +447,7 @@ fn test_create_then_list_then_use_then_delete_workflow() {
     assert!(list_stdout.contains("work"));
 
     // Use it
-    s.pim().arg("use").arg("work").assert().success();
+    s.pim().arg("set-default").arg("work").assert().success();
     s.assert_active_profile("work");
 
     // Delete it
@@ -471,38 +461,38 @@ fn test_create_then_list_then_use_then_delete_workflow() {
         !s.home()
             .join(".pi-manager")
             .join("profiles")
-            .join("work.json")
+            .join("work")
             .exists()
     );
 }
 
 #[test]
-fn test_migrate_creates_manifest_and_active_view() {
+fn test_migrate_creates_profile_dir() {
     let s = Sandbox::new();
 
-    // Create an old-style profile directory
-    let old_dir = s.home().join(".pi-manager").join("profiles").join("legacy");
-    fs::create_dir_all(old_dir.join("extensions")).unwrap();
-    fs::write(old_dir.join("extensions").join("rtk.ts"), "// ext").unwrap();
+    // Create old-style standalone manifest
+    fs::write(
+        s.home()
+            .join(".pi-manager")
+            .join("profiles")
+            .join("legacy.json"),
+        r#"{"select":{"extensions":[],"skills":[]}}"#,
+    )
+    .unwrap();
 
-    // Run migrate
     s.pim().arg("migrate").assert().success();
 
-    // Manifest should exist
-    let manifest = s
-        .home()
-        .join(".pi-manager")
-        .join("profiles")
-        .join("legacy.json");
-    assert!(manifest.exists(), "manifest should exist after migration");
-
-    // Old directory should be gone
+    let profile_dir = s.home().join(".pi-manager").join("profiles").join("legacy");
+    assert!(
+        profile_dir.join("manifest.json").exists(),
+        "manifest.json should exist after migration"
+    );
     assert!(
         !s.home()
             .join(".pi-manager")
             .join("profiles")
-            .join("legacy")
+            .join("legacy.json")
             .exists(),
-        "old profile directory should be removed"
+        "old standalone manifest should be removed"
     );
 }

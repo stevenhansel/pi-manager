@@ -8,10 +8,9 @@ sessions, and config files — **simultaneously** in different terminals.
 
 Pi supports the `PI_CODING_AGENT_DIR` environment variable (see `pi --help`),
 which overrides the default `~/.pi/agent` config directory. `pim` stores
-lightweight profile manifests under `~/.pi-manager/profiles/<name>.json`.
-When you run `pim <profile>`, it builds the profile's active view at
-`~/.pi-manager/.active/<name>/` and **exec's into `pi`** with
-`PI_CODING_AGENT_DIR` set to that directory.
+profiles as directories under `~/.pi-manager/profiles/<name>/`. Inside each profile directory, there is a `manifest.json` file.
+When you run `pim <profile>`, it builds/refreshes the profile's directory and **exec's into `pi`** with
+`PI_CODING_AGENT_DIR` set directly to `~/.pi-manager/profiles/<name>/`.
 
 This means:
 - **Multiple profiles can run at the same time** in different terminals
@@ -22,7 +21,7 @@ This means:
 ### First-time migration
 
 If you already have a real `~/.pi/agent/` directory from using pi normally,
-the first time you run `pim use <name>`, it will automatically migrate
+the first time you run `pim set-default <name>`, it will automatically migrate
 your existing config into the new resource pool format.
 
 ## Installation
@@ -101,10 +100,7 @@ pim edit work
 # List all profiles
 pim list
 
-# Build/refresh active view and set as default
-pim use work
-
-# Set a default profile (launched when running `pim` with no args)
+# Build/refresh the profile directory and set it as the default
 pim set-default work
 
 # Show current status
@@ -114,7 +110,7 @@ pim status
 pim delete experiments
 pim delete experiments --force   # skip confirmation
 
-# Migrate old-style profiles to the new JSON manifest format
+# Migrate old-style profiles to the new directory format
 pim migrate
 ```
 
@@ -126,7 +122,7 @@ pim migrate
 | `pim research` | Launch pi with that profile |
 | `pim -p "hello"` | Launch pi with default profile + args |
 | `pim work -- -p "hi"` | Launch pi with profile + args |
-| `pim use work` | Build active view + set as default |
+| `pim set-default work` | Build/refresh profile + set as default |
 | `pim edit work` | Edit profile selections interactively |
 | `pim list` | List all profiles |
 | `pim create work` | Create a new profile |
@@ -136,7 +132,7 @@ pim migrate
 
 ## What a profile looks like
 
-A profile is a lightweight JSON manifest under `~/.pi-manager/profiles/<name>.json`:
+A profile is a directory under `~/.pi-manager/profiles/<name>/` containing a `manifest.json` file:
 
 ```json
 {
@@ -155,45 +151,43 @@ A profile is a lightweight JSON manifest under `~/.pi-manager/profiles/<name>.js
 }
 ```
 
-When launched, `pim` builds the profile's active view at `~/.pi-manager/.active/<name>/`
-and exec's into `pi` with `PI_CODING_AGENT_DIR` set to that directory:
+When built or used, the profile directory itself becomes the pi coding agent folder:
 
 ```
-~/.pi-manager/.active/work/
-├── settings.json
-├── mcp.json
-├── config/          ── symlinks → data/work/config/   (persistent config files)
-├── extensions/      ── symlinks → pool/extensions/
-├── skills/          ── symlinks → pool/skills/
-├── prompts/         ── symlinks → pool/prompts/
-├── auth.json        ── symlink  → data/work/auth.json
-├── models.json      ── symlink  → data/work/models.json
-├── trust.json       ── symlink  → data/work/trust.json
-└── sessions/        ── symlinks → data/work/sessions/ (persistent sessions)
+~/.pi-manager/profiles/work/
+├── manifest.json     ── configuration manifest
+├── settings.json     ── generated from manifest
+├── mcp.json          ── generated from manifest
+├── config/           ── seeded defaults + manifest config overrides
+├── extensions/       ── symlinks → pool/extensions/
+├── skills/           ── symlinks → pool/skills/
+├── prompts/          ── symlinks → pool/prompts/
+├── auth.json         ── runtime auth file
+├── models.json       ── runtime models file
+├── trust.json        ── runtime trust file
+└── sessions/         ── runtime sessions directory
 ```
 
 Key differences from the old design:
 - **`~/.pi/agent` is never touched** — your default pi config is preserved
-- **Active views are persistent** — never deleted automatically
-- **Config files** are symlinked from `data/<name>/config/`, so runtime modifications persist
-- **Session files** are symlinked from `data/<name>/sessions/`, so sessions survive rebuilds
-- **Multiple profiles** can run simultaneously in different terminals
+- **Profile directory IS the agent directory** — no separate `.active/` or `data/` directories, keeping all state fully consolidated inside `profiles/<name>/`
+- **Isolated running** — Multiple profiles can run simultaneously in different terminals without any risk of interference
 
 ### How `PI_CODING_AGENT_DIR` works
 
 Pi reads `PI_CODING_AGENT_DIR` on startup to locate its config directory.
-pim sets this to the profile's active view before launching pi:
+pim sets this to the profile's directory before launching pi:
 
 ```bash
 # What pim does internally:
-PI_CODING_AGENT_DIR=~/.pi-manager/.active/research exec pi
+PI_CODING_AGENT_DIR=~/.pi-manager/profiles/research exec pi
 ```
 
 You can also use this directly if you want to run pi with a specific
 profile without pim:
 
 ```bash
-PI_CODING_AGENT_DIR=~/.pi-manager/.active/research pi -p "hello"
+PI_CODING_AGENT_DIR=~/.pi-manager/profiles/research pi -p "hello"
 ```
 
 ### What happens to `~/.pi/agent`?
@@ -202,13 +196,6 @@ PI_CODING_AGENT_DIR=~/.pi-manager/.active/research pi -p "hello"
 `~/.pi/agent` from using pi directly, it remains intact as your default
 pi config. Running `pi` directly (without pim) will continue to use it.
 
-If you have an old `~/.pi/agent` symlink from a previous version of pim,
-it's harmless and can be removed:
-
-```bash
-rm ~/.pi/agent   # optional — pim no longer uses it
-```
-
 ## Architecture
 
 pim uses a **resource pool configuration model** — see [`docs/configuration.md`](docs/configuration.md) for the full design.
@@ -216,6 +203,5 @@ pim uses a **resource pool configuration model** — see [`docs/configuration.md
 In short:
 
 - **`pool/`** — global source of truth for extensions, skills, and prompts
-- **`profiles/<name>.json`** — lightweight JSON manifests that select from the pool and declare configuration
-- **`data/<name>/`** — auto-generated runtime state (auth tokens, sessions, config files)
+- **`profiles/<name>/`** — profile-specific directory containing `manifest.json`, symlinked resources, and runtime state (auth, config, sessions)
 - **`~/.pi/agent`** — **never touched by pim** — left as your default pi config

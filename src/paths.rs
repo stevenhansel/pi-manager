@@ -7,19 +7,25 @@ pub fn pi_manager_root() -> PathBuf {
         .join(".pi-manager")
 }
 
-/// Directory where profile manifests (JSON) are stored.
+/// Root directory for all profile directories.
 pub fn profiles_root() -> PathBuf {
     pi_manager_root().join("profiles")
 }
 
-/// Path to a profile manifest JSON file.
-pub fn profile_manifest(name: &str) -> PathBuf {
-    profiles_root().join(format!("{name}.json"))
-}
-
-/// Old-style profile directory (pre-migration).
+/// Path to a profile's pi agent directory.
 pub fn profile_dir(name: &str) -> PathBuf {
     profiles_root().join(name)
+}
+
+/// Path to a profile's manifest file (inside the profile directory).
+pub fn profile_manifest(name: &str) -> PathBuf {
+    profile_dir(name).join("manifest.json")
+}
+
+/// Path to a profile's config directory (inside the profile directory).
+#[allow(dead_code)]
+pub fn profile_config_dir(name: &str) -> PathBuf {
+    profile_dir(name).join("config")
 }
 
 /// Global pool directory for reusable resources.
@@ -39,36 +45,7 @@ pub fn pool_prompts_dir() -> PathBuf {
     pool_dir().join("prompts")
 }
 
-/// Directory for profile-specific runtime state (auth, sessions, etc.)
-pub fn data_dir(name: &str) -> PathBuf {
-    pi_manager_root().join("data").join(name)
-}
-
-/// Root directory for active profile views.
-pub fn active_root() -> PathBuf {
-    pi_manager_root().join(".active")
-}
-
-/// Path to an active view of a profile (the effective agent dir).
-pub fn active_dir(name: &str) -> PathBuf {
-    active_root().join(name)
-}
-
-/// The actual pi agent directory (`~/.pi/agent`).
-/// When managed by pi-manager, this is a symlink pointing to an active view.
-pub fn agent_dir() -> PathBuf {
-    dirs::home_dir()
-        .expect("Could not find home directory")
-        .join(".pi")
-        .join("agent")
-}
-
-/// Directory for per-profile config files (within data dir).
-pub fn config_dir(name: &str) -> PathBuf {
-    data_dir(name).join("config")
-}
-
-/// File that stores the default profile name.
-pub fn default_file() -> PathBuf {
-    pi_manager_root().join("default")
+/// Path to the global pim configuration file.
+pub fn pim_config() -> PathBuf {
+    pi_manager_root().join("pim.json")
 }
