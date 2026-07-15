@@ -121,28 +121,7 @@ impl ProfileManager {
         let mut found = false;
 
         let mut names = Self::list_profile_names();
-
-        // Also check for old-style standalone manifests needing migration
-        let mut old_format: Vec<String> = Vec::new();
-        if let Ok(entries) = fs::read_dir(&root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json")
-                    && entry.file_type().is_ok_and(|t| t.is_file())
-                    && path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .is_some_and(|s| s != "pim.json" && !names.iter().any(|n| n.as_str() == s))
-                {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        old_format.push(stem.to_string());
-                    }
-                }
-            }
-        }
-
         names.sort();
-        old_format.sort();
 
         for name in &names {
             let is_active = active.as_deref() == Some(name.as_str());
@@ -159,12 +138,6 @@ impl ProfileManager {
             } else {
                 format!(" ◀ {}", markers.join(", "))
             };
-            println!("  {name}{suffix}");
-            found = true;
-        }
-
-        for name in &old_format {
-            let suffix = " (old format, run pim migrate)";
             println!("  {name}{suffix}");
             found = true;
         }
@@ -215,9 +188,6 @@ impl ProfileManager {
         fs::create_dir_all(paths::pool_extensions_dir())?;
         fs::create_dir_all(paths::pool_skills_dir())?;
         fs::create_dir_all(paths::pool_prompts_dir())?;
-
-        // One-time migration from old format if needed
-        Self::maybe_migrate_old_format(name)?;
 
         let manifest_path = paths::profile_manifest(name);
         if !manifest_path.exists() {
@@ -426,170 +396,6 @@ impl ProfileManager {
         }
         items.sort();
         items
-    }
-
-    // ─── Migration ──────────────────────────────────────────────
-
-    /// Migrate all old-style profiles to the new format.
-    #[allow(clippy::unnecessary_wraps)]
-    pub fn migrate() -> Result<()> {
-        let root = paths::profiles_root();
-        if !root.exists() {
-            println!("No profiles to migrate.");
-            return Ok(());
-        }
-
-        let mut migrated_count = 0;
-        let mut skipped = 0;
-
-        // Migrate standalone manifest files (profiles/<name>.json)
-        if let Ok(entries) = fs::read_dir(&root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json")
-                    && entry.file_type().is_ok_and(|t| t.is_file())
-                {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        if stem == "pim.json" {
-                            continue;
-                        }
-                        // Skip if already migrated
-                        if paths::profile_manifest(stem).exists() {
-                            skipped += 1;
-                            continue;
-                        }
-                        match Self::migrate_manifest_to_dir(stem) {
-                            Ok(()) => {
-                                migrated_count += 1;
-                                println!("  ✔ Migrated '{stem}'");
-                                // Rebuild active view if this was the active profile
-                                if Self::get_active().as_deref() == Some(stem) {
-                                    Self::set_default(stem).ok();
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("  ✘ Failed to migrate '{stem}': {e}");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Migrate old .active/data structure remnants
-        let old_active_root = paths::pi_manager_root().join(".active");
-        let old_data_root = paths::pi_manager_root().join("data");
-        if old_active_root.exists() {
-            fs::remove_dir_all(&old_active_root).ok();
-            println!("  ✔ Removed old .active/ directory");
-        }
-        if old_data_root.exists() {
-            fs::remove_dir_all(&old_data_root).ok();
-            println!("  ✔ Removed old data/ directory");
-        }
-
-        println!("Migration complete: {migrated_count} migrated, {skipped} already up-to-date");
-        Ok(())
-    }
-
-    /// Migrate a single standalone manifest (`profiles/<name>.json`) to
-    /// the new directory-based format (`profiles/<name>/manifest.json`)
-    /// and merge any existing runtime data from old locations.
-    fn migrate_manifest_to_dir(name: &str) -> Result<()> {
-        let old_manifest = paths::profiles_root().join(format!("{name}.json"));
-        if !old_manifest.is_file() {
-            bail!("No old-format manifest found for '{name}'");
-        }
-
-        let content = fs::read_to_string(&old_manifest)?;
-        let manifest: ProfileManifest = serde_json::from_str(&content)?;
-
-        let dir = paths::profile_dir(name);
-        fs::create_dir_all(&dir)?;
-
-        // Write manifest inside the new directory
-        let json = serde_json::to_string_pretty(&manifest)?;
-        fs::write(dir.join("manifest.json"), &json)?;
-
-        // Move runtime state from old data/<name>/ into the profile dir
-        let old_data = paths::pi_manager_root().join("data").join(name);
-        if old_data.is_dir() {
-            Self::merge_into(&old_data, &dir)?;
-        }
-
-        // Remove old standalone manifest
-        fs::remove_file(&old_manifest)?;
-
-        Ok(())
-    }
-
-    /// Recursively merge contents of `src` into `dst`, overwriting files.
-    /// Removes `src` after merge.
-    fn merge_into(src: &Path, dst: &Path) -> Result<()> {
-        if !src.is_dir() {
-            return Ok(());
-        }
-        for entry in fs::read_dir(src)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let src_path = entry.path();
-            let dst_path = dst.join(&name);
-            if src_path.is_dir() {
-                fs::create_dir_all(&dst_path)?;
-                Self::merge_into(&src_path, &dst_path)?;
-            } else {
-                fs::copy(&src_path, &dst_path)?;
-            }
-        }
-        fs::remove_dir_all(src)?;
-        Ok(())
-    }
-
-    /// Called by `use_profile` — silently migrates an old-format profile
-    /// to the new directory format if the old manifest exists.
-    fn maybe_migrate_old_format(name: &str) -> Result<()> {
-        let new_manifest = paths::profile_manifest(name);
-        if new_manifest.exists() {
-            return Ok(()); // Already new format
-        }
-
-        let old_manifest = paths::profiles_root().join(format!("{name}.json"));
-        if old_manifest.is_file() {
-            Self::migrate_manifest_to_dir(name)?;
-            // Also rebuild to pick up any .active/data remnants
-        }
-
-        // Check for old .active/<name> symlink forest that may have runtime data
-        let old_active = paths::pi_manager_root().join(".active").join(name);
-        let profile_dir = paths::profile_dir(name);
-        if old_active.is_dir() {
-            // Copy any real files (not symlinks) from old active view into profile dir
-            if let Ok(entries) = fs::read_dir(&old_active) {
-                for entry in entries.flatten() {
-                    let ft = entry.file_type().ok();
-                    if ft.is_some_and(|t| t.is_file() && !t.is_symlink()) {
-                        let src = entry.path();
-                        let dst = profile_dir.join(entry.file_name());
-                        if !dst.exists() {
-                            fs::copy(&src, &dst).ok();
-                        }
-                    }
-                }
-            }
-            // Merge config/ and sessions/ subdirectories
-            for sub in &["config", "sessions"] {
-                let src = old_active.join(sub);
-                if src.is_dir() {
-                    let dst = profile_dir.join(sub);
-                    fs::create_dir_all(&dst)?;
-                    Self::merge_into(&src, &dst).ok();
-                }
-            }
-            // Remove old active view
-            fs::remove_dir_all(&old_active).ok();
-        }
-
-        Ok(())
     }
 
     // ─── Profile building ───────────────────────────────────────
@@ -1243,50 +1049,6 @@ mod tests {
 
             let names = ProfileManager::list_profile_names();
             assert_eq!(names, vec!["alpha", "beta"]);
-        });
-    }
-
-    #[test]
-    fn test_migrate_manifest_to_dir() {
-        let (_tmp, home) = sandbox();
-        let name = "test-profile";
-        with_home(&home, || {
-            // Create old-style standalone manifest
-            let profiles_root = paths::profiles_root();
-            fs::create_dir_all(&profiles_root).unwrap();
-            fs::write(
-                profiles_root.join(format!("{name}.json")),
-                r#"{"select":{"extensions":["rtk.ts"]}}"#,
-            )
-            .unwrap();
-
-            // Create old data dir with runtime state
-            let old_data = paths::pi_manager_root().join("data").join(name);
-            fs::create_dir_all(old_data.join("config")).unwrap();
-            fs::write(old_data.join("auth.json"), r#"{"key":"val"}"#).unwrap();
-            fs::write(
-                old_data.join("config").join("searxng.json"),
-                r#"{"baseUrl":"x"}"#,
-            )
-            .unwrap();
-
-            let result = ProfileManager::migrate_manifest_to_dir(name);
-            assert!(result.is_ok(), "migrate failed: {:?}", result.err());
-
-            // Check new format
-            let dir = paths::profile_dir(name);
-            assert!(dir.join("manifest.json").exists());
-            let content = read_file(&dir.join("manifest.json"));
-            let manifest: ProfileManifest = serde_json::from_str(&content).unwrap();
-            assert_eq!(manifest.select.extensions, vec!["rtk.ts"]);
-
-            // Check data was merged
-            assert!(dir.join("auth.json").exists());
-            assert!(dir.join("config").join("searxng.json").exists());
-
-            // Old files should be gone
-            assert!(!profiles_root.join(format!("{name}.json")).exists());
-            assert!(!paths::pi_manager_root().join("data").join(name).exists());
         });
     }
 }

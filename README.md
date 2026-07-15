@@ -110,8 +110,6 @@ pim status
 pim delete experiments
 pim delete experiments --force   # skip confirmation
 
-# Migrate old-style profiles to the new directory format
-pim migrate
 ```
 
 ### Quick reference
@@ -128,7 +126,6 @@ pim migrate
 | `pim create work` | Create a new profile |
 | `pim delete work` | Delete a profile |
 | `pim status` | Show current status |
-| `pim migrate` | Migrate old-style profiles |
 
 ## What a profile looks like
 

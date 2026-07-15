@@ -359,72 +359,6 @@ fn test_delete_force_default_profile_clears_default() {
     );
 }
 
-// ─── migration ─────────────────────────────────────────────────
-
-#[test]
-fn test_migrate_converts_old_format() {
-    let s = Sandbox::new();
-
-    // Create an old-style standalone manifest
-    fs::write(
-        s.home()
-            .join(".pi-manager")
-            .join("profiles")
-            .join("legacy.json"),
-        r#"{"select":{"extensions":["rtk.ts"],"skills":[]}}"#,
-    )
-    .unwrap();
-    // Create old data dir
-    fs::create_dir_all(
-        s.home()
-            .join(".pi-manager")
-            .join("data")
-            .join("legacy")
-            .join("config"),
-    )
-    .unwrap();
-    fs::write(
-        s.home()
-            .join(".pi-manager")
-            .join("data")
-            .join("legacy")
-            .join("auth.json"),
-        r#"{"key":"secret"}"#,
-    )
-    .unwrap();
-
-    s.pim().arg("migrate").assert().success();
-
-    // Check new format
-    let profile_dir = s.home().join(".pi-manager").join("profiles").join("legacy");
-    assert!(
-        profile_dir.join("manifest.json").exists(),
-        "manifest.json should exist after migration"
-    );
-    assert!(
-        profile_dir.join("auth.json").exists(),
-        "auth.json should be merged"
-    );
-
-    // Old files should be gone
-    assert!(
-        !s.home()
-            .join(".pi-manager")
-            .join("profiles")
-            .join("legacy.json")
-            .exists(),
-        "old standalone manifest should be removed"
-    );
-    assert!(
-        !s.home()
-            .join(".pi-manager")
-            .join("data")
-            .join("legacy")
-            .exists(),
-        "old data dir should be removed"
-    );
-}
-
 #[test]
 fn test_create_then_list_then_use_then_delete_workflow() {
     let s = Sandbox::new();
@@ -461,36 +395,5 @@ fn test_create_then_list_then_use_then_delete_workflow() {
             .join("profiles")
             .join("work")
             .exists()
-    );
-}
-
-#[test]
-fn test_migrate_creates_profile_dir() {
-    let s = Sandbox::new();
-
-    // Create old-style standalone manifest
-    fs::write(
-        s.home()
-            .join(".pi-manager")
-            .join("profiles")
-            .join("legacy.json"),
-        r#"{"select":{"extensions":[],"skills":[]}}"#,
-    )
-    .unwrap();
-
-    s.pim().arg("migrate").assert().success();
-
-    let profile_dir = s.home().join(".pi-manager").join("profiles").join("legacy");
-    assert!(
-        profile_dir.join("manifest.json").exists(),
-        "manifest.json should exist after migration"
-    );
-    assert!(
-        !s.home()
-            .join(".pi-manager")
-            .join("profiles")
-            .join("legacy.json")
-            .exists(),
-        "old standalone manifest should be removed"
     );
 }

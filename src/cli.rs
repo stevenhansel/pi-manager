@@ -13,7 +13,6 @@ use clap::{Parser, Subcommand};
 ///   pim create <name> --from <x> Create from existing profile
 ///   pim delete <name>            Delete a profile
 ///   pim status                   Show current status
-///   pim migrate                  Migrate old-style profiles
 ///
 /// Each profile has its own extensions, skills, prompts, MCP servers,
 /// auth tokens, sessions, and config files. Profiles are fully isolated.
@@ -68,9 +67,6 @@ pub enum Commands {
         /// Profile name
         name: String,
     },
-
-    /// Migrate old-style profiles (directories) to the new JSON manifest format
-    Migrate,
 }
 
 /// Names of reserved subcommands that can never be profile names.
@@ -80,7 +76,6 @@ pub const RESERVED_COMMANDS: &[&str] = &[
     "create",
     "delete",
     "status",
-    "migrate",
     "set-default",
     "help",
     "--help",
