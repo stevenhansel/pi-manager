@@ -39,6 +39,9 @@ struct ProfileManifest {
     /// Per-profile environment variables injected when launching pi.
     #[serde(default)]
     env: HashMap<String, String>,
+    /// Inline model provider configs (backward compat, overridden by pool selections).
+    #[serde(default)]
+    models_providers: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -53,6 +56,9 @@ struct Selection {
     /// MCP servers selected from pool/mcp/.
     #[serde(default)]
     mcp_servers: Vec<String>,
+    /// Model providers selected from pool/models/.
+    #[serde(default)]
+    models: Vec<String>,
 }
 
 pub struct ProfileManager;
@@ -166,9 +172,11 @@ impl ProfileManager {
             if manifest_path.exists() {
                 let ext_count = Self::count_selected(name, "extensions").unwrap_or(0);
                 let skill_count = Self::count_selected(name, "skills").unwrap_or(0);
+                let mcp_count = Self::count_selected(name, "mcp_servers").unwrap_or(0);
+                let model_count = Self::count_selected(name, "models").unwrap_or(0);
                 let config_count = Self::count_selected(name, "configs").unwrap_or(0);
                 println!(
-                    "Active profile: {name} ({ext_count} extensions, {skill_count} skills, {config_count} configs)"
+                    "Active profile: {name} ({ext_count} ext, {skill_count} skills, {mcp_count} mcp, {model_count} models, {config_count} configs)"
                 );
             } else {
                 println!("Active profile: {name}");
@@ -309,6 +317,7 @@ impl ProfileManager {
             &manifest.select.skills,
             &manifest.select.prompts,
             &manifest.select.mcp_servers,
+            &manifest.select.models,
         )?;
 
         // Apply selections from the TUI result
@@ -319,7 +328,8 @@ impl ProfileManager {
             let same_prompts = Self::sets_equal(&result.selected_prompts, &manifest.select.prompts);
             let same_mcp =
                 Self::sets_equal(&result.selected_mcp_servers, &manifest.select.mcp_servers);
-            if same_exts && same_skills && same_prompts && same_mcp {
+            let same_models = Self::sets_equal(&result.selected_models, &manifest.select.models);
+            if same_exts && same_skills && same_prompts && same_mcp && same_models {
                 println!("ℹ️ No changes made.");
                 return Ok(());
             }
@@ -331,6 +341,7 @@ impl ProfileManager {
         new_manifest.select.skills = result.selected_skills;
         new_manifest.select.prompts = result.selected_prompts;
         new_manifest.select.mcp_servers = result.selected_mcp_servers;
+        new_manifest.select.models = result.selected_models;
 
         let json =
             serde_json::to_string_pretty(&new_manifest).context("Failed to serialize manifest")?;
@@ -394,12 +405,21 @@ impl ProfileManager {
         const RUNTIME_KEYS: &[&str] = &["lastChangelogVersion"];
 
         // Ensure subdirectories exist
-        for sub in &["extensions", "skills", "prompts", "config", "sessions"] {
+        for sub in &[
+            "extensions",
+            "skills",
+            "prompts",
+            "config",
+            "sessions",
+            "models",
+        ] {
             fs::create_dir_all(profile_dir.join(sub))
                 .with_context(|| format!("Failed to create {sub} directory"))?;
         }
-        // Ensure pool MCP directory exists for reading server configs
+        // Ensure pool MCP and models directories exist
         fs::create_dir_all(paths::pool_mcp_dir()).context("Failed to create pool MCP directory")?;
+        fs::create_dir_all(paths::pool_models_dir())
+            .context("Failed to create pool models directory")?;
 
         let pool = paths::pool_dir();
 
@@ -577,6 +597,87 @@ impl ProfileManager {
             fs::remove_file(&mcp_path).ok();
         }
 
+        // --- Generate models.json ---
+        // Builds from pool/models/<name>/model.json for each selected model
+        // provider, with template substitution from config/<name>.json.
+        // Falls back to inline modelsProviders from the manifest for backward compat.
+        let models_path = profile_dir.join("models.json");
+        let config_dir = profile_dir.join("config");
+
+        let mut merged_providers = serde_json::Map::new();
+
+        // 1. Pool-based selections
+        for provider_name in &manifest.select.models {
+            let pool_entry = paths::pool_models_dir()
+                .join(provider_name)
+                .join("model.json");
+            if let Ok(content) = fs::read_to_string(&pool_entry) {
+                if let Ok(mut provider_value) = serde_json::from_str::<serde_json::Value>(&content)
+                {
+                    if let Some(provider_obj) = provider_value.as_object_mut() {
+                        // Strip TUI metadata
+                        provider_obj.remove("config_fields");
+                        provider_obj.remove("checks");
+                        provider_obj.remove("tags");
+                        provider_obj.remove("name");
+                        provider_obj.remove("description");
+
+                        // The provider key is determined by the "provider" field
+                        // or falls back to the directory name
+                        let key = provider_obj
+                            .remove("provider")
+                            .and_then(|k| k.as_str().map(String::from))
+                            .unwrap_or_else(|| provider_name.clone());
+
+                        // Load per-profile config for template substitution
+                        let provider_config_path = config_dir.join(format!("{provider_name}.json"));
+                        if let Ok(config_content) = fs::read_to_string(&provider_config_path) {
+                            if let Ok(user_config) =
+                                serde_json::from_str::<serde_json::Value>(&config_content)
+                            {
+                                Self::substitute_templates(&mut provider_value, &user_config);
+                            }
+                        }
+
+                        merged_providers.insert(key, provider_value);
+                    }
+                }
+            } else {
+                eprintln!("  ⚠ Model provider '{provider_name}' not found in pool");
+            }
+        }
+
+        // 2. Backward compat: inline modelsProviders (not overridden by pool selection)
+        if let Some(inline_providers) = manifest.models_providers.as_object() {
+            for (name, config) in inline_providers {
+                if !merged_providers.contains_key(name) {
+                    merged_providers.insert(name.clone(), config.clone());
+                }
+            }
+        }
+
+        // 3. Write models.json if we have providers
+        if !merged_providers.is_empty() {
+            let mut models_doc = serde_json::Map::new();
+            models_doc.insert(
+                "providers".to_string(),
+                serde_json::Value::Object(merged_providers),
+            );
+            let models_str = serde_json::to_string_pretty(&models_doc)?;
+            fs::write(&models_path, &models_str).context("Failed to write models.json")?;
+        } else if models_path.exists() {
+            // Don't remove models.json if it exists but no pool selections —
+            // it may have been created by pi itself or the user manually.
+            // Only remove if it was explicitly cleared.
+            if manifest.settings.as_object().is_some_and(|s| {
+                s.get("clearModels")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+            }) {
+                fs::remove_file(&models_path).ok();
+            }
+        }
+
         Ok(())
     }
 
@@ -750,6 +851,7 @@ impl ProfileManager {
             "skills" => Ok(manifest.select.skills.len()),
             "prompts" => Ok(manifest.select.prompts.len()),
             "mcp_servers" => Ok(manifest.select.mcp_servers.len()),
+            "models" => Ok(manifest.select.models.len()),
             "configs" => Ok(manifest.configs.len()),
             _ => Ok(0),
         }
@@ -836,6 +938,7 @@ impl Default for ProfileManifest {
             mcp_settings: serde_json::Value::Null,
             configs: HashMap::new(),
             env: HashMap::new(),
+            models_providers: serde_json::Value::Null,
         }
     }
 }
@@ -848,6 +951,7 @@ impl Selection {
             "skills" => &self.skills,
             "prompts" => &self.prompts,
             "mcp" => &self.mcp_servers,
+            "models" => &self.models,
             _ => &[],
         }
     }

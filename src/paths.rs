@@ -49,6 +49,11 @@ pub fn pool_mcp_dir() -> PathBuf {
     pool_dir().join("mcp")
 }
 
+/// Path to the pool models directory.
+pub fn pool_models_dir() -> PathBuf {
+    pool_dir().join("models")
+}
+
 /// Path to the global pim configuration file.
 pub fn pim_config() -> PathBuf {
     pi_manager_root().join("pim.json")

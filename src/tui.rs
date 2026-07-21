@@ -39,6 +39,7 @@ struct EditorState {
     skills: Vec<PoolItem>,
     prompts: Vec<PoolItem>,
     mcp_servers: Vec<PoolItem>,
+    models: Vec<PoolItem>,
 
     // Which panel is focused (0=extensions, 1=skills, 2=prompts, 3=mcp)
     active_panel: usize,
@@ -166,6 +167,69 @@ fn load_mcp_state(profile_name: &str, selected: &[String]) -> Vec<PoolItem> {
     items
 }
 
+/// Load model provider items from pool/models/<name>/model.json
+/// Each entry is a directory with a `model.json` that may contain `config_fields`.
+fn load_models_state(profile_name: &str, selected: &[String]) -> Vec<PoolItem> {
+    let pool_dir = paths::pool_models_dir();
+    let mut items = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(&pool_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy().to_string();
+
+            // Only process directories
+            if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+
+            // Read the model.json from the pool entry to extract config_fields
+            let model_path = entry.path().join("model.json");
+            let (model_manifest, config_status) = if let Ok(content) =
+                fs::read_to_string(&model_path)
+            {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let fields = value
+                        .get("config_fields")
+                        .and_then(|f| serde_json::from_value::<Vec<ConfigField>>(f.clone()).ok())
+                        .unwrap_or_default();
+                    let desc = value
+                        .get("description")
+                        .and_then(|d| d.as_str().map(String::from))
+                        .unwrap_or_else(|| "Model provider".to_string());
+                    let manifest = ExtensionManifest {
+                        name: value
+                            .get("name")
+                            .and_then(|n| n.as_str().map(String::from))
+                            .or_else(|| Some(name_str.clone())),
+                        description: Some(desc),
+                        config_fields: fields,
+                        checks: vec![],
+                        tags: vec!["model".to_string()],
+                    };
+                    let config = load_item_config(profile_name, &name_str);
+                    let status = schema::evaluate_status(&manifest, config.as_ref());
+                    (Some(manifest), status)
+                } else {
+                    (None, ConfigStatus::Ready)
+                }
+            } else {
+                (None, ConfigStatus::Ready)
+            };
+
+            items.push(PoolItem {
+                name: name_str.clone(),
+                selected: selected.contains(&name_str),
+                manifest: model_manifest,
+                config_status,
+            });
+        }
+    }
+
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    items
+}
+
 /// Read the profile's config file for a specific item, if it exists.
 fn load_item_config(profile_name: &str, item_name: &str) -> Option<serde_json::Value> {
     let config_path = paths::profile_dir(profile_name)
@@ -267,6 +331,7 @@ pub fn run_editor(
     selected_skills: &[String],
     selected_prompts: &[String],
     selected_mcp: &[String],
+    selected_models: &[String],
 ) -> Result<EditorResult> {
     enable_raw_mode()
         .context("Failed to enter raw terminal mode. The TUI editor requires an interactive terminal (TTY).")
@@ -283,6 +348,7 @@ pub fn run_editor(
         skills: load_state(profile_name, selected_skills, "skills"),
         prompts: load_state(profile_name, selected_prompts, "prompts"),
         mcp_servers: load_mcp_state(profile_name, selected_mcp),
+        models: load_models_state(profile_name, selected_models),
         active_panel: 0,
         cursor: 0,
         mode: ViewMode::Main,
@@ -321,6 +387,7 @@ pub struct EditorResult {
     pub selected_skills: Vec<String>,
     pub selected_prompts: Vec<String>,
     pub selected_mcp_servers: Vec<String>,
+    pub selected_models: Vec<String>,
     pub changed: bool,
 }
 
@@ -330,6 +397,7 @@ fn build_result(state: &EditorState) -> EditorResult {
         selected_skills: selected_names(&state.skills),
         selected_prompts: selected_names(&state.prompts),
         selected_mcp_servers: selected_names(&state.mcp_servers),
+        selected_models: selected_names(&state.models),
         changed: state.dirty,
     }
 }
@@ -380,11 +448,11 @@ fn handle_main_event(state: &mut EditorState, event: &Event) -> bool {
                 }
             }
             KeyCode::Left | KeyCode::Tab if *modifiers == KeyModifiers::SHIFT => {
-                state.active_panel = (state.active_panel + 3) % 4;
+                state.active_panel = (state.active_panel + 4) % 5;
                 state.cursor = 0;
             }
             KeyCode::Right | KeyCode::Tab => {
-                state.active_panel = (state.active_panel + 1) % 4;
+                state.active_panel = (state.active_panel + 1) % 5;
                 state.cursor = 0;
             }
             KeyCode::Home | KeyCode::Char('g') => {
@@ -522,6 +590,9 @@ fn toggle_current(state: &mut EditorState) {
         3 if idx < state.mcp_servers.len() => {
             state.mcp_servers[idx].selected = !state.mcp_servers[idx].selected;
         }
+        4 if idx < state.models.len() => {
+            state.models[idx].selected = !state.models[idx].selected;
+        }
         _ => {}
     }
 }
@@ -535,6 +606,7 @@ fn open_configure(state: &mut EditorState) {
         1 => state.skills.get(idx),
         2 => state.prompts.get(idx),
         3 => state.mcp_servers.get(idx),
+        4 => state.models.get(idx),
         _ => None,
     };
 
@@ -564,6 +636,7 @@ fn current_panel(state: &EditorState) -> &[PoolItem] {
         1 => &state.skills,
         2 => &state.prompts,
         3 => &state.mcp_servers,
+        4 => &state.models,
         _ => &state.extensions,
     }
 }
@@ -584,6 +657,9 @@ fn find_pool_item_mut<'a>(state: &'a mut EditorState, name: &str) -> Option<&'a 
         return Some(item);
     }
     if let Some(item) = state.mcp_servers.iter_mut().find(|i| i.name == name) {
+        return Some(item);
+    }
+    if let Some(item) = state.models.iter_mut().find(|i| i.name == name) {
         return Some(item);
     }
     None
@@ -657,6 +733,15 @@ fn render_main_view(f: &mut Frame, state: &EditorState) {
         "MCP Servers",
         &state.mcp_servers,
         tailwind::VIOLET.c600,
+    );
+    render_panel(
+        f,
+        left_layout[4],
+        state,
+        4,
+        "Models",
+        &state.models,
+        tailwind::CYAN.c600,
     );
 
     // Right side: detail panel

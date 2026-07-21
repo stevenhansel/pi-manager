@@ -9,17 +9,18 @@ A design pattern where reusable resources live in a global **pool** and each pro
 ├── pool/                ← SOURCE OF TRUTH: the actual files
 │   ├── extensions/
 │   ├── skills/
-│   └── prompts/
+│   ├── prompts/
+│   └── models/          ← model provider definitions
 │
 ├── profiles/            ← ISOLATED PROFILE DIRECTORIES: one per profile
 │   ├── work/            ← PI_CODING_AGENT_DIR = this directory
 │   │   ├── manifest.json    ← SELECTION: lightweight JSON manifest
 │   │   ├── settings.json    ← generated from settings key in manifest
 │   │   ├── mcp.json         ← generated from mcp keys in manifest
+│   │   ├── models.json      ← generated from pool model selections
 │   │   ├── config/          ← seeded defaults + manifest config overrides
 │   │   ├── sessions/        ← pi session history (persistent)
 │   │   ├── auth.json        ← login tokens
-│   │   ├── models.json      ← model configuration
 │   │   ├── trust.json       ← trust decisions
 │   │   └── APPEND_SYSTEM.md ← system prompt append
 │   │
@@ -45,21 +46,27 @@ pool/
 │   ├── web-research/
 │   │   └── SKILL.md
 │   └── freecad/
-└── prompts/
-    ├── review.md
-    └── commit.md
+├── prompts/
+│   ├── review.md
+│   └── commit.md
+└── models/
+    ├── anthropic/                 ← model provider directory
+    │   └── model.json
+    └── openai/
+        └── model.json
 ```
 
 ### Manifest — the selection
 
-A profile manifest is a single `manifest.json` file inside the profile directory that says *what* to pull from the pool and *how* to configure things. It never duplicates file contents — it only references them by name.
+A profile manifest is a single `manifest.json` file inside the profile directory that says *what* to pull from the pool and *how* to configure things. It never duplicates file contents — it only references them by name. The `settings.defaultModel` and `settings.defaultProvider` keys control which model pi selects by default.
 
 ```json
 {
   "select": {
     "extensions": ["rtk", "searxng"],
     "skills": ["web-research"],
-    "prompts": ["review", "commit"]
+    "prompts": ["review", "commit"],
+    "models": ["anthropic", "openai"]
   },
   "settings": {
     "defaultProvider": "anthropic",
@@ -164,12 +171,113 @@ reads its config from `$PI_CODING_AGENT_DIR`, not `~/.pi/agent`.
 | Prompts | `pool/prompts/` | `review.md` | Same — reusable templates shared across profiles |
 | Settings | Profile manifest | `settings.defaultProvider` | Per-profile preferences (different models, theme per context) |
 | MCP servers | Profile manifest | `mcpServers.filesystem` | Environment-specific — each profile needs different servers |
+| Models | `pool/models/` | `model.json` per entry | Provider + model definitions selected per profile, generated into `models.json` |
 | Config files | `profiles/<name>/config/` | `searxng.json` | Per-profile config persisted across rebuilds |
 | Auth tokens | `profiles/<name>/` | `auth.json` | Auto-generated secrets, never version-controlled |
-| Models | `profiles/<name>/` | `models.json` | AI provider/model configuration |
+| Models | `pool/models/` + profile build | `models.json` | AI provider/model definitions in pool; generated per profile from selections |
+| Model providers | `pool/models/` | `model.json` | Reusable provider+model entries; selected per profile, built into `models.json` |
 | Sessions | `profiles/<name>/` | `sessions/` | Runtime state, persisted across rebuilds |
 | Trust decisions | `profiles/<name>/` | `trust.json` | Auto-generated, machine-local |
 | System prompt | `profiles/<name>/` | `APPEND_SYSTEM.md` | Per-profile system prompt append |
+
+## Pool Models
+
+Model provider definitions live in `pool/models/<name>/model.json`. Each entry defines a provider configuration and its available models, following pi's `models.json` format. Selected models are built into the profile's `models.json` on activation.
+
+### Pool Model Entry
+
+```json
+{
+  "name": "Anthropic",
+  "description": "Anthropic Claude models — Sonnet 4, Opus 4",
+  "tags": ["model", "anthropic"],
+  "provider": "anthropic",
+  "api": "anthropic-messages",
+  "apiKey": "$ANTHROPIC_API_KEY",
+  "config_fields": [
+    {
+      "key": "apiKey",
+      "label": "Anthropic API Key",
+      "type": "password",
+      "required": true,
+      "help": "Get your API key at https://console.anthropic.com/",
+      "envVar": "ANTHROPIC_API_KEY",
+      "envPriority": "prefer"
+    }
+  ],
+  "models": [
+    {
+      "id": "claude-sonnet-4-20250514",
+      "name": "Claude Sonnet 4",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "contextWindow": 200000,
+      "maxTokens": 64000,
+      "cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 }
+    }
+  ]
+}
+```
+
+- `provider` — the key used in the generated `providers` object (e.g., `"anthropic"`, `"openrouter"`)
+- `api` — pi API type: `"anthropic-messages"`, `"openai-completions"`, `"openai-responses"`, `"google-generative-ai"`
+- `apiKey` — supports pi's value resolution (`$ENV_VAR`, `!command`, literals)
+- `config_fields` — TUI metadata: fields shown in the configure view and used for template substitution
+- `models` — array of model definitions following pi's [model configuration format](models.md)
+
+### Backward Compat: Inline Providers
+
+For quick one-off model configs, use `modelsProviders` in the manifest:
+
+```json
+{
+  "select": { "models": [] },
+  "modelsProviders": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [{ "id": "llama3.1:8b" }]
+    }
+  }
+}
+```
+
+Inline providers are only used when no pool selection with the same key exists.
+
+### Generated Output
+
+The build step generates `models.json` in the profile directory:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "api": "anthropic-messages",
+      "apiKey": "$ANTHROPIC_API_KEY",
+      "models": [...]
+    }
+  }
+}
+```
+
+This is the file pi reads at runtime. You can also edit it manually — pi reloads model config on each `/model` invocation.
+
+### Suppressing Built-in Models
+
+pi ships with built-in providers (Anthropic, OpenAI, DeepSeek, OpenRouter, Google, etc.). To restrict which built-in models appear, use the `enabledModels` setting in the manifest:
+
+```json
+{
+  "settings": {
+    "defaultModel": "claude-sonnet-4-20250514",
+    "defaultProvider": "anthropic",
+    "enabledModels": ["claude-*", "gpt-*"]
+  }
+}
+```
+
+This is a glob pattern filter that controls which models appear in the Ctrl+P model cycler.
 
 ## Benefits over the old approach
 
